@@ -18,7 +18,13 @@ func Run(port string) {
 	defer store.DB.Close()
 
 	// static dir "public" must contain your PWA files (index.html, app.js, styles.css, manifest.json, icons, etc.)
-	publicDir := filepath.Join(".", "public")
+	exePath, err := os.Executable()
+	if err != nil {
+		log.Fatal(err)
+	}
+	exeDir := filepath.Dir(exePath)
+	publicDir := filepath.Join(exeDir, "public")
+
 	if _, err := os.Stat(publicDir); os.IsNotExist(err) {
 		log.Printf("warning: %s not found; create it and drop your PWA assets in there\n", publicDir)
 	}
