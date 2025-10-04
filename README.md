@@ -108,11 +108,11 @@ Ici, **sloubi = liberté**.
 
 - [x] REST + WS avec Gin  
 - [x] SQLite pour la persistance  
-- [x] Markdown safe (goldmark + bluemonday)  
 - [x] Compteur sloubi  
-- [x] GIF selector (Kaamelott par défaut)  
-- [x] Emoji picker (recherche + récents)  
 - [x] PWA installable  
+- [ ] Markdown safe (goldmark + bluemonday)  
+- [ ] GIF selector (Kaamelott par défaut)  
+- [ ] Emoji picker (recherche + récents)  
 - [ ] Rooms / salons multiples  
 - [ ] Auth via OAuth  
 - [ ] Hébergement fédéré (serveurs Sloubi interconnectés)  
