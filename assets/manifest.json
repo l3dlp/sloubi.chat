@@ -1,7 +1,7 @@
 {
-  "name": "Le Compteur de Sloubi",
+  "name": "Sloubi",
   "short_name": "Sloubi",
-  "description": "Taverne de Kaamelott - Comptez les sloubi !",
+  "description": "Dans cette taverne, on compte les sloubis.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#1a0f08",
