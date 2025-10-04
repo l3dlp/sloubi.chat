@@ -6,7 +6,10 @@ import (
 	"os"
 	"regexp"
 	"sloubi/src/chat"
+	"strconv"
 	"time"
+
+	_ "modernc.org/sqlite" // <-- indispensable : charge le driver SQLite pur Go
 )
 
 type Store struct {
@@ -43,23 +46,42 @@ func openStore() *Store {
 	return &Store{DB: db}
 }
 
-var sloubiRe = regexp.MustCompile(`(?i)\bsloubi\b`)
+var (
+	sloubiExactRe = regexp.MustCompile(`(?i)\bsloubi\s*(\d+)\b`)
+)
 
-func (s *Store) currentSloubi() (num int) {
-	_ = s.DB.QueryRow(`SELECT COALESCE(MAX(sloubi_number),0) FROM messages`).Scan(&num)
+func (s *Store) lastSloubiEntry() (num int, lastClientID string) {
+	_ = s.DB.QueryRow(`SELECT COALESCE(MAX(sloubi_number),0),
+		COALESCE((SELECT client_id FROM messages WHERE sloubi_number IS NOT NULL ORDER BY sloubi_number DESC LIMIT 1),'')
+		FROM messages`).Scan(&num, &lastClientID)
 	return
 }
 
 func (s *Store) insertMessage(m chat.Message) (chat.Message, error) {
-	// compute sloubi
+	// par défaut : pas un sloubi validé
 	var sloubi *int
-	if sloubiRe.MatchString(m.Message) {
-		next := s.currentSloubi() + 1
-		sloubi = &next
-	}
+
+	// timestamp
 	ts := m.TimestampISO
 	if ts == "" {
 		ts = time.Now().UTC().Format(time.RFC3339)
+	}
+
+	// check si message contient "sloubi N"
+	matches := sloubiExactRe.FindStringSubmatch(m.Message)
+	if len(matches) == 2 {
+		claimed, _ := strconv.Atoi(matches[1])
+
+		// récupérer dernier sloubi + client associé
+		current, lastClient := s.lastSloubiEntry()
+		expected := current + 1
+
+		// conditions :
+		// - nombre exact attendu
+		// - pas le même auteur que le dernier validé
+		if claimed == expected && m.ClientID != lastClient {
+			sloubi = &expected
+		}
 	}
 
 	res, err := s.DB.Exec(`INSERT INTO messages (client_id, nickname, message, ts, sloubi_number)
@@ -70,8 +92,8 @@ func (s *Store) insertMessage(m chat.Message) (chat.Message, error) {
 	id, _ := res.LastInsertId()
 
 	m.ID = id
-	m.SloubiNumber = sloubi
 	m.TimestampISO = ts
+	m.SloubiNumber = sloubi
 	return m, nil
 }
 
