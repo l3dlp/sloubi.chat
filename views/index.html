@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#8b6914">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Sloubi">
+    <link rel="manifest" href="/manifest.json">
+    <link rel="apple-touch-icon" href="/icon-192.png">
+    <title>Le Compteur de Sloubi - Taverne de Kaamelott</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=MedievalSharp&family=Uncial+Antiqua&display=swap" rel="stylesheet">
+</head>
+<body>
+    
+    <div class="tavern-container">
+        <div class="flickering-light"></div>
+        
+        <header class="tavern-header">
+            <button id="settingsButton" class="settings-button" aria-label="Paramètres">⚙️</button>
+            <h1 class="title">La Taverne du Sloubi</h1>
+            <div class="subtitle">Bretagne, An de grâce 2025</div>
+        </header>
+
+        <div class="sloubi-counter">
+            <div class="counter-label">Sloubis comptés :</div>
+            <div class="counter-value" id="sloubiCount">0</div>
+            <div id="last-sloubi-hero" class="hero" style="padding:1rem;border-bottom:1px solid #222">
+                <div id="last-sloubi-title" style="font-weight:700">Sloubi 0</div>
+                <div id="last-sloubi-meta" style="opacity:.7;font-size:.9em"></div>
+                <div id="last-sloubi-text" style="margin-top:.25rem"></div>
+            </div>
+        </div>
+
+        <div class="chat-area">
+            <div class="chat-messages" id="chatMessages">
+                <div class="system-message">
+                    🍺 Bienvenue en la taverne ! Comptez les sloubi, c'est tout ce qu'il y a à faire...
+                </div>
+            </div>
+        </div>
+
+        <div id="cheatButton" class="cheat-button" style="display: none;">
+            <button id="quickSloubi" class="quick-sloubi-btn">
+                ⚡ Sloubi Rapide
+            </button>
+        </div>
+
+        <div class="chat-input-container">
+            <input 
+                type="text" 
+                id="chatInput" 
+                class="chat-input" 
+                placeholder="Écrivez 'sloubi' pour compter..."
+                autocomplete="off"
+            >
+            <button id="sendButton" class="send-button">Envoyer</button>
+        </div>
+
+        <div class="ambient-elements">
+            <div class="candle candle-1"></div>
+            <div class="candle candle-2"></div>
+            <div class="candle candle-3"></div>
+        </div>
+
+        <div id="settingsModal" class="settings-modal">
+            <div class="settings-content">
+                <div class="settings-header">
+                    <h2>⚙️ Paramètres</h2>
+                    <button id="closeSettings" class="close-settings">✕</button>
+                </div>
+                <div class="settings-body">
+                    <div class="setting-item">
+                        <div class="setting-label">👤 Pseudonyme</div>
+                        <input type="text" id="nicknameInput" class="nickname-input" placeholder="Votre nom" maxlength="20">
+                    </div>
+                    <div class="setting-item" id="pwaInstallSection" style="display: none;">
+                        <div class="setting-label">📱 Installer l'application</div>
+                        <button id="installButton" class="install-button">Installer</button>
+                    </div>
+                    <div class="setting-item">
+                        <div class="setting-label">🎮 Mode Triche</div>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="cheatModeToggle">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js" type="module"></script>
+</body>
+</html>
