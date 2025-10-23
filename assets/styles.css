@@ -78,8 +78,9 @@ body {
 }
 
 .title {
+    text-align: left;
     font-family: 'Uncial Antiqua', cursive;
-    font-size: clamp(2rem, 6vw, 4rem);
+    font-size: clamp(2rem, 6vw, 2.72rem);
     color: #ffcc66;
     text-shadow: 0 0 20px rgba(255, 140, 0, 0.6),
                  2px 2px 4px rgba(0, 0, 0, 0.9);
@@ -87,6 +88,7 @@ body {
 }
 
 .subtitle {
+    text-align: left;
     font-size: clamp(0.9rem, 2.5vw, 1.3rem);
     color: #d4a574;
     font-style: italic;
@@ -286,6 +288,9 @@ body {
 .ambient-elements {
     position: absolute;
     pointer-events: none;
+scale: 7;
+right: 320px;
+bottom: 0;
 }
 
 .candle {
@@ -330,26 +335,34 @@ body {
 }
 
 .candle-1 {
-    top: 15%;
-    left: 10%;
+    bottom: -30px;
+    right: 0;
     animation-delay: 0s;
 }
 
 .candle-2 {
-    top: 15%;
-    right: 10%;
+    bottom: -22px;
+    right: -10px;
     animation-delay: 0.7s;
 }
 
 .candle-3 {
-    bottom: 20%;
-    left: 5%;
+    bottom: -38px;
+    right: -20px;
     animation-delay: 1.4s;
 }
 
 @media (max-width: 768px) {
     .candle {
         display: none;
+    }
+}
+
+@media (min-width: 769px) {
+    .sloubi-counter {
+	position: fixed;
+	right: 120px;
+	top: 28px;
     }
 }
 
