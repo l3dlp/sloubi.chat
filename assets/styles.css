@@ -9,6 +9,7 @@ body {
     background: #1a0f08;
     color: #f4e4c1;
     overflow: hidden;
+    height: 100dvh;
     height: 100vh;
     width: 100vw;
 }
@@ -16,6 +17,7 @@ body {
 .tavern-container {
     position: relative;
     width: 100vw;
+    height: 100dvh;
     height: 100vh;
     background: 
         radial-gradient(ellipse at center top, rgba(255, 140, 0, 0.15), transparent 60%),
