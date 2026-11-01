@@ -1,0 +1,305 @@
+/* home.css — l'accueil : un énorme /________ , vert émeraude fantasy ou rouge lave 8 bits */
+
+:root {
+    --bg: #1a0f08;
+    --parchment: #f4e4c1;
+    --gold: #ffcc66;
+    --muted: #b48a5e;
+
+    --emerald: #2ee59d;
+    --emerald-deep: #0f8a5f;
+    --lava: #ff3b1f;
+    --lava-deep: #8a0b00;
+    --ember: #ff8c00;
+
+    --fs: clamp(2.6rem, 11vw, 7.5rem);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body { height: 100%; }
+
+body {
+    font-family: 'MedievalSharp', cursive;
+    background:
+        radial-gradient(ellipse at 50% 15%, rgba(255, 140, 0, 0.16), transparent 55%),
+        radial-gradient(ellipse at 50% 120%, rgba(0, 0, 0, 0.9), transparent 60%),
+        linear-gradient(180deg, #2a1810 0%, var(--bg) 100%);
+    background-color: var(--bg);
+    color: var(--parchment);
+    overflow: hidden;
+}
+
+/* ========== Effets plein écran, allumés selon l'état ========== */
+.fx {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.35s ease;
+}
+
+.fx-emerald {
+    background:
+        radial-gradient(ellipse at 50% 50%, rgba(46, 229, 157, 0.18), transparent 55%),
+        radial-gradient(ellipse at 50% 50%, rgba(255, 204, 102, 0.08), transparent 70%);
+}
+
+.fx-lava {
+    background:
+        linear-gradient(0deg, rgba(255, 69, 0, 0.55) 0%, rgba(255, 140, 0, 0.18) 18%, transparent 42%),
+        radial-gradient(ellipse at 50% 110%, rgba(255, 59, 31, 0.6), transparent 60%);
+    animation: lava-pulse 1.6s steps(4) infinite;
+}
+
+.fx-scanlines {
+    background: repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.32) 0 2px, transparent 2px 4px);
+    mix-blend-mode: multiply;
+}
+
+body[data-state="ok"] .fx-emerald,
+body[data-state="bad"] .fx-lava,
+body[data-state="bad"] .fx-scanlines { opacity: 1; }
+
+@keyframes lava-pulse {
+    0%, 100% { filter: brightness(1); }
+    50% { filter: brightness(1.35); }
+}
+
+/* ========== Mise en page ========== */
+.home {
+    position: relative;
+    min-height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: clamp(28px, 6vh, 64px);
+    padding: 24px 16px;
+    text-align: center;
+}
+
+.brand-name {
+    font-family: 'Uncial Antiqua', cursive;
+    font-size: clamp(1.4rem, 4vw, 2rem);
+    color: var(--gold);
+    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.8);
+}
+
+.brand-tag {
+    margin-top: 4px;
+    color: var(--muted);
+    font-style: italic;
+}
+
+/* ========== L'invite ========== */
+.prompt {
+    width: min(100%, 1100px);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.prompt-line {
+    --k: 1;
+    display: inline-flex;
+    align-items: baseline;
+    white-space: nowrap;
+    font-family: 'Uncial Antiqua', cursive;
+    font-size: calc(var(--fs) * var(--k));
+    line-height: 1.15;
+    color: var(--parchment);
+    text-shadow: 0 4px 18px rgba(0, 0, 0, 0.7);
+    cursor: text;
+    transition: color 0.25s ease, text-shadow 0.25s ease;
+}
+
+.prompt-slash {
+    color: var(--gold);
+    margin-right: 0.04em;
+}
+
+.prompt-field { position: relative; }
+
+.prompt-mirror {
+    position: absolute;
+    left: 0;
+    top: 0;
+    visibility: hidden;
+    white-space: pre;
+}
+
+.prompt-input {
+    font: inherit;
+    color: inherit;
+    letter-spacing: inherit;
+    text-shadow: inherit;
+    background: none;
+    border: none;
+    outline: none;
+    padding: 0;
+    min-width: 0.5em;
+    caret-color: transparent;
+}
+
+.prompt-input::placeholder {
+    color: currentColor;
+    opacity: 0.22;
+}
+
+.prompt-line.caret-native .prompt-input { caret-color: currentColor; }
+
+/* le gros curseur bloc qui clignote */
+.prompt-cursor {
+    display: inline-block;
+    width: 0.5em;
+    height: 0.95em;
+    margin-left: 0.06em;
+    transform: translateY(0.12em);
+    background: currentColor;
+    opacity: 0;
+    box-shadow: 0 0 0.3em currentColor;
+}
+
+.prompt-line.focused:not(.caret-native) .prompt-cursor {
+    animation: blink 1.05s steps(1) infinite;
+}
+
+@keyframes blink {
+    0%, 55% { opacity: 1; }
+    56%, 100% { opacity: 0; }
+}
+
+.prompt-hint {
+    margin-top: clamp(10px, 2vh, 20px);
+    min-height: 1.6em;
+    font-size: clamp(1rem, 2.6vw, 1.35rem);
+    color: var(--muted);
+    transition: color 0.25s ease;
+}
+
+.prompt-rule {
+    margin-top: 6px;
+    font-size: 0.85rem;
+    color: var(--muted);
+    opacity: 0.7;
+}
+
+.prompt-rule code {
+    font-family: inherit;
+    color: var(--gold);
+    padding: 0 2px;
+}
+
+/* ========== Vert émeraude, fantasy ========== */
+body[data-state="ok"] .prompt-line {
+    color: var(--emerald);
+    text-shadow:
+        0 0 0.12em rgba(46, 229, 157, 0.9),
+        0 0 0.45em rgba(15, 138, 95, 0.75),
+        0 0 1.1em rgba(255, 204, 102, 0.25);
+}
+
+body[data-state="ok"] .prompt-slash { color: var(--gold); }
+
+body[data-state="ok"] .prompt-hint {
+    color: var(--emerald);
+    text-shadow: 0 0 10px rgba(46, 229, 157, 0.5);
+}
+
+.spark {
+    position: fixed;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: radial-gradient(circle, #fff6c8 0%, var(--gold) 45%, transparent 70%);
+    box-shadow: 0 0 8px var(--gold);
+    pointer-events: none;
+    opacity: 0;
+    animation: spark 1.1s ease-out forwards;
+}
+
+@keyframes spark {
+    0% { opacity: 0; transform: translate(0, 0) scale(0.4); }
+    20% { opacity: 1; }
+    100% { opacity: 0; transform: translate(var(--dx), var(--dy)) scale(1.2); }
+}
+
+/* ========== Rouge 8 bits, dernier boss du monde de la lave ========== */
+body[data-state="bad"] .prompt-line {
+    font-family: 'Press Start 2P', monospace;
+    font-size: calc(var(--fs) * 0.62 * var(--k));
+    line-height: 1.4;
+    color: var(--lava);
+    text-shadow:
+        0.06em 0.06em 0 var(--lava-deep),
+        0 0 0.3em rgba(255, 140, 0, 0.7);
+    -webkit-font-smoothing: none;
+    font-smooth: never;
+}
+
+body[data-state="bad"] .prompt-slash { color: var(--ember); }
+
+body[data-state="bad"] .prompt-cursor { border-radius: 0; box-shadow: none; }
+
+body[data-state="bad"] .prompt-hint {
+    font-family: 'Press Start 2P', monospace;
+    font-size: clamp(0.6rem, 1.8vw, 0.85rem);
+    line-height: 1.8;
+    color: var(--ember);
+    text-shadow: 2px 2px 0 var(--lava-deep);
+}
+
+.prompt-line.shake { animation: shake 0.36s steps(6); }
+
+@keyframes shake {
+    0%, 100% { translate: 0 0; }
+    17% { translate: -0.08em 0.02em; }
+    33% { translate: 0.08em -0.02em; }
+    50% { translate: -0.06em 0; }
+    67% { translate: 0.06em 0.02em; }
+    83% { translate: -0.03em 0; }
+}
+
+/* ========== Ailleurs ========== */
+.elsewhere {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    font-size: 1rem;
+}
+
+.elsewhere a { color: var(--muted); text-decoration: none; }
+
+.elsewhere a:hover,
+.elsewhere a:focus-visible { color: var(--gold); }
+
+.elsewhere-main strong {
+    font-family: 'Uncial Antiqua', cursive;
+    color: var(--gold);
+    font-weight: normal;
+}
+
+.recent {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 6px 14px;
+    color: var(--muted);
+    opacity: 0.85;
+}
+
+.recent[hidden] { display: none; }
+
+.home-foot { font-size: 0.85rem; }
+
+.home-foot a { color: var(--muted); opacity: 0.7; }
+
+a:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
+
+@media (prefers-reduced-motion: reduce) {
+    .fx, .prompt-line, .prompt-hint { transition: none; }
+    .fx-lava { animation: none; }
+    .prompt-line.focused:not(.caret-native) .prompt-cursor { animation: none; opacity: 1; }
+}

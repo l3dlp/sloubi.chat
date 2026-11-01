@@ -1,0 +1,659 @@
+/* room.css — la taverne enfumée (tous les salons sauf /chante).
+   Concept : « La fumée parle ». Les messages se condensent hors de la fumée, montent,
+   et s'y dissolvent ; le compteur est une lumière dans le brouillard. */
+
+:root {
+    /* fond : brun de suie, jamais du noir pur */
+    --soot: #140b07;
+    --soot-2: #1d110a;
+
+    /* encres */
+    --parchment: #efe0c2;
+    --parchment-dim: rgba(239, 224, 194, 0.72);
+    --parchment-faint: rgba(239, 224, 194, 0.46);
+    --parchment-ghost: rgba(239, 224, 194, 0.26);
+
+    /* accents : or de chandelle, braise */
+    --gold: #f2c46d;
+    --ember: #ff8a3d;
+
+    --hairline: rgba(242, 196, 109, 0.14);
+    --hairline-strong: rgba(242, 196, 109, 0.32);
+    --glass: rgba(24, 14, 9, 0.42);
+
+    --display: 'Uncial Antiqua', serif;
+    --text: 'Cormorant Garamond', 'Iowan Old Style', Georgia, serif;
+
+    --ease: cubic-bezier(0.16, 1, 0.3, 1);
+    --ease-io: cubic-bezier(0.76, 0, 0.24, 1);
+    --ease-back: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+    --col: min(680px, calc(100vw - 32px));
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body { height: 100%; }
+
+body.room {
+    font-family: var(--text);
+    font-size: 19px;
+    line-height: 1.5;
+    letter-spacing: -0.01em;
+    color: var(--parchment);
+    /* repli avant (ou sans) WebGL : un âtre peint */
+    background:
+        radial-gradient(ellipse 70% 50% at 18% 100%, rgba(255, 110, 40, 0.22), transparent 70%),
+        radial-gradient(ellipse 60% 40% at 80% 10%, rgba(242, 196, 109, 0.08), transparent 70%),
+        linear-gradient(180deg, var(--soot-2), var(--soot));
+    background-color: var(--soot);
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+}
+
+::selection { background: rgba(242, 196, 109, 0.35); color: #fff7e6; }
+
+/* ========== La scène ========== */
+.smoke {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+    opacity: 0;
+    transition: opacity 1.6s var(--ease);
+}
+
+body.fx-ready .smoke { opacity: 1; }
+
+/* un voile qui assombrit le centre-bas pour la lisibilité, et la vignette de la taverne */
+.veil {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background:
+        radial-gradient(ellipse 40% 46% at 50% 68%, rgba(14, 8, 5, 0.42), transparent 75%),
+        radial-gradient(ellipse 120% 90% at 50% 50%, transparent 55%, rgba(8, 4, 2, 0.85) 100%);
+}
+
+/* ========== Structure ========== */
+.room-shell {
+    position: relative;
+    height: 100dvh;
+    display: grid;
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+    padding:
+        max(14px, env(safe-area-inset-top))
+        max(16px, env(safe-area-inset-right))
+        max(14px, env(safe-area-inset-bottom))
+        max(16px, env(safe-area-inset-left));
+}
+
+/* ========== Barre ========== */
+.room-bar {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    gap: 12px;
+}
+
+.room-mark {
+    justify-self: start;
+    font-family: var(--display);
+    font-size: 1.05rem;
+    color: var(--gold);
+    text-decoration: none;
+    opacity: 0.85;
+    transition: opacity 250ms var(--ease);
+}
+
+.room-mark span { color: var(--parchment-faint); }
+.room-mark:hover { opacity: 1; }
+
+.room-chan {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+}
+
+.room-chan-label {
+    font-size: 0.68rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.24em;
+    color: var(--parchment-faint);
+}
+
+.room-chan-name {
+    font-family: var(--display);
+    font-size: clamp(1.05rem, 2.6vw, 1.35rem);
+    color: var(--parchment);
+    text-shadow: 0 0 18px rgba(242, 196, 109, 0.35);
+}
+
+.room-gear { justify-self: end; }
+
+.icon-btn {
+    display: inline-grid;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    border: 1px solid var(--hairline);
+    background: var(--glass);
+    color: var(--parchment-dim);
+    cursor: pointer;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    transition: color 250ms var(--ease), border-color 250ms var(--ease), transform 400ms var(--ease);
+}
+
+.room-chan .icon-btn { width: 30px; height: 30px; align-self: center; }
+
+.icon-btn svg,
+.whisper-send svg,
+.postit-close svg,
+.postit-pin svg {
+    width: 18px;
+    height: 18px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.6;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.room-chan .icon-btn svg { width: 15px; height: 15px; }
+
+.icon-btn:hover { color: var(--gold); border-color: var(--hairline-strong); }
+.room-gear:hover { transform: rotate(60deg); }
+
+:focus-visible { outline: 1.5px solid var(--gold); outline-offset: 3px; }
+
+/* ========== Le compteur : une lumière dans la fumée ========== */
+.counter {
+    display: grid;
+    justify-items: center;
+    margin-top: clamp(8px, 3vh, 36px);
+    pointer-events: none;
+}
+
+.counter-label {
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.32em;
+    color: var(--parchment-faint);
+}
+
+.counter-value {
+    font-family: var(--display);
+    font-size: clamp(4.5rem, 17vw, 11.5rem);
+    line-height: 1.05;
+    padding: 0 0.12em 0.06em;
+    letter-spacing: -0.03em;
+    color: transparent;
+    background: linear-gradient(180deg, #fff1cf 0%, var(--gold) 45%, var(--ember) 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    filter: drop-shadow(0 0 22px rgba(255, 150, 60, 0.45)) drop-shadow(0 0 60px rgba(255, 110, 40, 0.25));
+    transition: transform 0.18s ease;
+}
+
+/* posée par room-fx.js à chaque sloubi validé en direct */
+.counter-value.flare { animation: flare 1.2s var(--ease) both; }
+
+@keyframes flare {
+    0% { filter: blur(14px) drop-shadow(0 0 40px rgba(255, 160, 60, 0.9)); opacity: 0.2; transform: scale(1.18); }
+    35% { opacity: 1; }
+    100% { filter: blur(0) drop-shadow(0 0 22px rgba(255, 150, 60, 0.45)) drop-shadow(0 0 60px rgba(255, 110, 40, 0.25)); transform: scale(1); }
+}
+
+/* ========== Les messages sortent de la fumée ========== */
+.room-chat {
+    min-height: 0;
+    display: flex;
+    justify-content: center;
+}
+
+.chat-messages {
+    width: var(--col);
+    height: 100%;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 30vh 4px 18px;
+    /* les anciens messages montent et se dissolvent dans la fumée */
+    -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 34%, #000 100%);
+    mask-image: linear-gradient(180deg, transparent 0%, #000 34%, #000 100%);
+    scrollbar-width: none;
+}
+
+.chat-messages::-webkit-scrollbar { display: none; }
+
+.chat-messages > :first-child { margin-top: auto; }
+
+.message,
+.system-message {
+    animation: condense 1s var(--ease) both;
+}
+
+@keyframes condense {
+    from {
+        opacity: 0;
+        filter: blur(10px);
+        transform: translateY(18px) scale(0.985);
+        letter-spacing: 0.06em;
+    }
+    to {
+        opacity: 1;
+        filter: blur(0);
+        transform: none;
+        letter-spacing: -0.01em;
+    }
+}
+
+.message {
+    display: block;
+    font-size: clamp(1.12rem, 2.4vw, 1.3rem);
+    line-height: 1.4;
+    color: var(--parchment);
+    text-shadow: 0 1px 12px rgba(10, 5, 2, 0.9), 0 0 2px rgba(10, 5, 2, 0.8);
+    overflow-wrap: anywhere;
+}
+
+.message-nickname {
+    display: block;
+    width: fit-content;
+    margin-bottom: 1px;
+    font-size: 0.62em;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    color: var(--gold);
+    opacity: 0.85;
+}
+
+/* un sloubi validé : la ligne prend feu */
+.sloubi-message {
+    position: relative;
+    padding-left: 54px;
+    color: #ffe8b8;
+    text-shadow: 0 0 18px rgba(255, 150, 60, 0.55), 0 1px 10px rgba(10, 5, 2, 0.9);
+}
+
+.sloubi-message::before {
+    content: attr(data-sloubi);
+    position: absolute;
+    left: 0;
+    top: 50%;
+    translate: 0 -50%;
+    min-width: 40px;
+    padding: 2px 6px;
+    font-family: var(--display);
+    font-size: 1rem;
+    text-align: center;
+    color: var(--soot);
+    background: linear-gradient(180deg, #ffe2a0, var(--ember));
+    border-radius: 999px;
+    box-shadow: 0 0 18px rgba(255, 140, 60, 0.6);
+    letter-spacing: 0;
+}
+
+.system-message {
+    align-self: center;
+    max-width: 90%;
+    font-style: italic;
+    font-size: 1rem;
+    text-align: center;
+    color: var(--parchment-faint);
+    text-shadow: 0 1px 10px rgba(10, 5, 2, 0.9);
+}
+
+/* ========== Saisie : un murmure ========== */
+.room-bottom {
+    display: grid;
+    justify-items: center;
+    gap: 10px;
+    padding-top: 6px;
+}
+
+.whisper {
+    width: var(--col);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 6px 6px 22px;
+    border-radius: 999px;
+    border: 1px solid var(--hairline);
+    background: var(--glass);
+    backdrop-filter: blur(14px) saturate(1.2);
+    -webkit-backdrop-filter: blur(14px) saturate(1.2);
+    box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 230, 180, 0.05);
+    transition: border-color 400ms var(--ease), box-shadow 400ms var(--ease);
+}
+
+.whisper:focus-within {
+    border-color: var(--hairline-strong);
+    box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45), 0 0 0 6px rgba(242, 196, 109, 0.06), 0 0 40px rgba(255, 140, 60, 0.12);
+}
+
+.whisper-input {
+    flex: 1;
+    min-width: 0;
+    height: 44px;
+    border: none;
+    outline: none;
+    background: none;
+    font: inherit;
+    font-size: 1.15rem;
+    color: var(--parchment);
+}
+
+.whisper-input::placeholder { color: var(--parchment-ghost); font-style: italic; }
+
+.whisper-send {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    border: none;
+    cursor: pointer;
+    color: var(--soot);
+    background: radial-gradient(circle at 35% 30%, #fff0c8, var(--gold) 55%, var(--ember));
+    box-shadow: 0 0 22px rgba(255, 150, 60, 0.35);
+    transition: transform 400ms var(--ease-back), box-shadow 400ms var(--ease);
+}
+
+.whisper-send svg { stroke-width: 2.2; }
+
+.whisper-send:hover { transform: scale(1.06); box-shadow: 0 0 34px rgba(255, 150, 60, 0.6); }
+.whisper-send:active { transform: scale(0.94); }
+
+.quick-sloubi-btn {
+    font: inherit;
+    font-size: 0.85rem;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    padding: 8px 18px;
+    border-radius: 999px;
+    border: 1px solid var(--hairline-strong);
+    background: rgba(255, 140, 60, 0.12);
+    color: var(--gold);
+    cursor: pointer;
+}
+
+/* ========== Le parchemin (post-it) ========== */
+.postit,
+.postit-pin {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 50;
+}
+
+.postit {
+    width: min(250px, calc(100vw - 16px));
+    color: #3b2714;
+    background:
+        radial-gradient(ellipse at 20% 10%, rgba(255, 255, 255, 0.35), transparent 60%),
+        radial-gradient(ellipse at 90% 100%, rgba(120, 70, 20, 0.25), transparent 60%),
+        linear-gradient(170deg, #f3e2bb, #e2c58e);
+    border-radius: 3px;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(80, 50, 20, 0.15);
+    rotate: -1.5deg;
+    transition: rotate 400ms var(--ease), box-shadow 400ms var(--ease);
+}
+
+.postit[hidden],
+.postit-pin[hidden] { display: none; }
+
+.postit.dragging { rotate: 0deg; box-shadow: 0 34px 80px rgba(0, 0, 0, 0.7); }
+
+.postit-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 10px 6px 14px;
+    cursor: grab;
+    touch-action: none;
+    user-select: none;
+}
+
+.postit.dragging .postit-head { cursor: grabbing; }
+
+.postit-title {
+    font-family: var(--display);
+    font-size: 1rem;
+    color: #6b3d16;
+}
+
+.postit-close {
+    display: grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    border: none;
+    border-radius: 50%;
+    background: transparent;
+    color: #6b3d16;
+    cursor: pointer;
+}
+
+.postit-close:hover { background: rgba(107, 61, 22, 0.12); }
+
+.postit-text {
+    display: block;
+    width: 100%;
+    min-height: 130px;
+    resize: vertical;
+    padding: 4px 14px 8px;
+    border: none;
+    outline: none;
+    background: transparent;
+    color: inherit;
+    font-family: var(--text);
+    font-size: 1.1rem;
+    font-style: italic;
+    line-height: 1.35;
+}
+
+.postit-text::placeholder { color: rgba(59, 39, 20, 0.45); }
+
+.postit-foot {
+    padding: 0 14px 10px;
+    text-align: right;
+    font-size: 0.75rem;
+    letter-spacing: 0.08em;
+    color: rgba(59, 39, 20, 0.55);
+}
+
+.postit-pin {
+    display: grid;
+    place-items: center;
+    width: 46px;
+    height: 46px;
+    border-radius: 50%;
+    border: 1px solid var(--hairline-strong);
+    background: var(--glass);
+    color: var(--gold);
+    cursor: pointer;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+
+.postit-pin.has-news { animation: pin-news 1.4s var(--ease) infinite; }
+
+.postit-pin.has-news::after {
+    content: '';
+    position: absolute;
+    top: 3px;
+    right: 3px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--ember);
+    box-shadow: 0 0 10px var(--ember);
+}
+
+@keyframes pin-news {
+    0%, 100% { translate: 0 0; }
+    50% { translate: 0 -6px; }
+}
+
+/* ========== Paramètres ========== */
+.settings-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: grid;
+    place-items: center;
+    padding: 16px;
+    background: rgba(8, 4, 2, 0.6);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 400ms var(--ease), visibility 0s linear 400ms;
+}
+
+.settings-modal.active {
+    opacity: 1;
+    visibility: visible;
+    transition: opacity 400ms var(--ease), visibility 0s;
+}
+
+.settings-content {
+    width: min(420px, 100%);
+    padding: 22px;
+    border-radius: 20px;
+    border: 1px solid var(--hairline);
+    background: rgba(26, 15, 9, 0.92);
+    box-shadow: 0 40px 100px rgba(0, 0, 0, 0.7);
+    transform: translateY(16px) scale(0.98);
+    transition: transform 600ms var(--ease);
+}
+
+.settings-modal.active .settings-content { transform: none; }
+
+.settings-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 14px;
+}
+
+.settings-header h2 {
+    font-family: var(--display);
+    font-weight: normal;
+    font-size: 1.4rem;
+    color: var(--gold);
+}
+
+.settings-body { display: grid; gap: 4px; }
+
+.setting-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 12px 0;
+    border-top: 1px solid var(--hairline);
+}
+
+.setting-label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+    color: var(--parchment-dim);
+}
+
+.setting-link {
+    color: var(--parchment-dim);
+    text-decoration: none;
+    font-size: 0.95rem;
+}
+
+.setting-link:hover { color: var(--gold); }
+
+.nickname-input {
+    width: 58%;
+    padding: 8px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--hairline);
+    background: rgba(0, 0, 0, 0.25);
+    color: var(--parchment);
+    font: inherit;
+    font-size: 1.05rem;
+    outline: none;
+}
+
+.nickname-input:focus { border-color: var(--hairline-strong); }
+
+.install-button {
+    padding: 8px 16px;
+    border-radius: 999px;
+    border: 1px solid var(--hairline-strong);
+    background: rgba(242, 196, 109, 0.12);
+    color: var(--gold);
+    font: inherit;
+    cursor: pointer;
+}
+
+.toggle-switch { position: relative; width: 46px; height: 26px; flex: none; }
+
+.toggle-switch input { position: absolute; inset: 0; opacity: 0; cursor: pointer; z-index: 1; }
+
+.toggle-slider {
+    position: absolute;
+    inset: 0;
+    border-radius: 999px;
+    background: rgba(239, 224, 194, 0.14);
+    transition: background 250ms var(--ease);
+}
+
+.toggle-slider::before {
+    content: '';
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--parchment);
+    transition: transform 400ms var(--ease-back);
+}
+
+.toggle-switch input:checked + .toggle-slider { background: var(--ember); }
+.toggle-switch input:checked + .toggle-slider::before { transform: translateX(20px); }
+.toggle-switch input:focus-visible + .toggle-slider { outline: 1.5px solid var(--gold); outline-offset: 3px; }
+
+/* ========== Mobile : pensé pour le pouce ========== */
+@media (max-width: 600px) {
+    body.room { font-size: 18px; }
+    .room-bar { grid-template-columns: auto 1fr auto; }
+    .room-mark span { display: none; }
+    .room-chan { justify-self: center; }
+    .room-chan-label { display: none; }
+    .chat-messages { padding-top: 22vh; gap: 12px; }
+    .counter { margin-top: 4px; }
+}
+
+@media (max-height: 560px) {
+    .counter-value { font-size: clamp(3rem, 14vh, 6rem); }
+    .counter-label { display: none; }
+}
+
+/* ========== Mouvement réduit : la même taverne, immobile ========== */
+@media (prefers-reduced-motion: reduce) {
+    .message, .system-message, .counter-value.flare { animation: none; }
+    .smoke { transition: none; }
+    .postit-pin.has-news { animation: none; }
+}
