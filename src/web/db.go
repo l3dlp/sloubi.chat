@@ -3,6 +3,7 @@ package web
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -41,6 +42,16 @@ func openStore(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("migration: %w", err)
 	}
+	// reporte le WAL dans le fichier principal : une copie de chat.sqlite seul reste
+	// une sauvegarde valable, et le WAL ne grossit pas sans fin
+	if _, err := db.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
+		log.Printf("checkpoint: %v", err)
+	}
+	go func() {
+		for range time.Tick(time.Hour) {
+			_, _ = db.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`)
+		}
+	}()
 	return s, nil
 }
 

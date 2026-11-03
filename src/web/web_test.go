@@ -318,11 +318,79 @@ func TestRoutes(t *testing.T) {
 }
 
 func TestCleanText(t *testing.T) {
-	if got := cleanText(" a\x00b c\r\nd ", true); got != "abc\nd" {
-		t.Errorf("cleanText = %q", got)
+	cases := []struct {
+		in       string
+		newlines bool
+		want     string
+	}{
+		{" a\x00b\u2028c\r\nd ", true, "abc\nd"},
+		{"a\nb", false, "ab"},
+		{"\u202eecnevreP", false, "ecnevreP"},                   // inversion de direction
+		{"sl\u200boubi 1", false, "sloubi 1"},                   // espace sans chasse
+		{"\u2066gauche\u2069", false, "gauche"},                 // isolats de direction
+		{"Z\u0351\u0352\u0357\u0358a", false, "Z\u0351\u0352a"}, // zalgo plafonné à 2
+		{"e\u0301", false, "é"},                                 // NFC
+		{"👨\u200d👩\u200d👧", false, "👨\u200d👩\u200d👧"},           // emoji composé intact
+		{"❤️", false, "❤️"},
 	}
-	if got := cleanText("a\nb", false); got != "ab" {
-		t.Errorf("cleanText sans saut = %q", got)
+	for _, tc := range cases {
+		if got := cleanText(tc.in, tc.newlines); got != tc.want {
+			t.Errorf("cleanText(%q) = %q, attendu %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestClientKey(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tc := range []struct{ remote, want string }{
+		{"203.0.113.7:1234", "203.0.113.7"},
+		{"[2001:db8:1:2:aaaa::1]:443", "2001:db8:1:2::/64"},
+		{"[2001:db8:1:2:bbbb::9]:443", "2001:db8:1:2::/64"}, // même /64 : même clé
+	} {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest("GET", "/", nil)
+		c.Request.RemoteAddr = tc.remote
+		if got := clientKey(c); got != tc.want {
+			t.Errorf("clientKey(%s) = %s, attendu %s", tc.remote, got, tc.want)
+		}
+	}
+}
+
+func TestWSCap(t *testing.T) {
+	s := &server{}
+	for i := 0; i < maxWSPerKey; i++ {
+		if !s.wsAcquire("ip") {
+			t.Fatalf("connexion %d refusée", i)
+		}
+	}
+	if s.wsAcquire("ip") {
+		t.Fatal("plafond par IP ignoré")
+	}
+	if !s.wsAcquire("autre") {
+		t.Fatal("autre IP pénalisée")
+	}
+	s.wsRelease("ip")
+	if !s.wsAcquire("ip") {
+		t.Fatal("place libérée non réutilisable")
+	}
+}
+
+func TestSecurityHeaders(t *testing.T) {
+	w := do(testServer(t), "GET", "/kaamelott", "")
+	for h, want := range map[string]string{
+		"Content-Security-Policy":    "style-src 'self';",
+		"Strict-Transport-Security":  "max-age=",
+		"X-Frame-Options":            "DENY",
+		"X-Content-Type-Options":     "nosniff",
+		"Permissions-Policy":         "camera=()",
+		"Cross-Origin-Opener-Policy": "same-origin",
+	} {
+		if !strings.Contains(w.Header().Get(h), want) {
+			t.Errorf("%s = %q, attendu %q", h, w.Header().Get(h), want)
+		}
+	}
+	if strings.Contains(w.Body.String(), `style="`) {
+		t.Error("style inline dans la page : bloqué par la CSP")
 	}
 }
 

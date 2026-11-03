@@ -124,6 +124,9 @@ Créer des salons à volonté ouvre la porte au spam. Le minimum avant d’ouvri
 
 - [x] En-têtes de sécurité (CSP, `X-Frame-Options`, `nosniff`) ; le serveur n’écoute plus que sur 127.0.0.1 par défaut (`HOST` pour changer).
 
+- [x] Audit du 01/11/2026 : timeouts HTTP (slowloris), clés de rate-limit IPv6 en /64, plafond de WS simultanés, plafond global de requêtes, texte libre sans caractères de direction ni zalgo, CSP sans style inline, HSTS/COOP/CORP/Permissions-Policy, Gin en mode release, checkpoint du WAL.
+- [ ] Installer `deploy/hardening.conf` sur le service systemd (aujourd'hui il tourne en root, score 9,6 UNSAFE ; validé à 1,2 sur une instance de test).
+
 ## 6. Repo / exploitation
 
 - [ ] Le binaire `sloubi` (≈ 35 Mo) est versionné. Le sortir de git (`.gitignore`) et le publier en release.

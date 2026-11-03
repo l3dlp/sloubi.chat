@@ -21,7 +21,7 @@ The project targets Go 1.27.3. There is no linter config, no JS build step and n
 
 The server resolves `assets/`, `views/`, `db/` and `forbidden.json` relative to the **current working directory**, so run it from the repo root (tests `chdir` there in `TestMain`). It refuses to start without a valid `forbidden.json`. `db/chat.sqlite` (WAL mode) is created and migrated on startup and is gitignored.
 
-Production: systemd unit `sloubi` runs `./sloubi` from the repo root, behind Caddy (`/etc/Caddyfile`, reverse proxy to 127.0.0.1:8888). Gin trusts `X-Forwarded-For` only from 127.0.0.1/::1, which is what the per-IP rate limits rely on.
+Production: systemd unit `sloubi` runs `./sloubi` from the repo root (hardening drop-in in `deploy/hardening.conf`: `www-data`, read-only FS except `db/`; anything new that writes to disk must go under `db/` or get its own `ReadWritePaths`), behind Caddy (`/etc/Caddyfile`, reverse proxy to 127.0.0.1:8888). Gin trusts `X-Forwarded-For` only from 127.0.0.1/::1. Rate limits key on `clientKey` (IPv4, or the IPv6 /64).
 
 ## Architecture
 
@@ -29,7 +29,8 @@ Production: systemd unit `sloubi` runs `./sloubi` from the repo root, behind Cad
   - Pages: `GET /` renders `views/home.html`. `GET /:chan` renders `views/room.html` (the 3D smoky tavern) with `{{.Chan}}` for every room, `chante` included. Uppercase names get a 301 to lowercase; invalid or forbidden names get a 404 that renders the home page with the name prefilled, so it shows red.
   - API: `/api/check/:chan`, `POST /api/:chan/messages`, `GET /api/:chan/last-sloubi`, `POST /api/:chan/postit`, `GET /ws/:chan`.
   - Handlers take a `channelResolver`, so the legacy routes (`/verif.json`, `/last-sloubi.json`, `/ws`) reuse the same code, pinned to `chante`.
-  - Input hygiene happens here: `application/json` required, 4 KB body cap, control characters stripped, length limits.
+  - Input hygiene happens here: `application/json` required, 4 KB body cap, length limits. `cleanText` applies NFC, strips control and format characters (bidi, zero-width; ZWJ kept) and caps combining marks at 2.
+  - Transport: `http.Server` timeouts (5 s headers), `floodGuard` on every request, a WS cap per key (`maxWSPerKey`), and security headers including a CSP with no inline styles. Use the `hidden` attribute or CSSOM (`el.style.x = …`), never `style="…"` in templates.
   - Nicknames go through `cleanNickname`: NFC, Latin script + ASCII digits + space `_-.'` only, 2–24 runes, `forbidden.json` applied. Invalid characters are rejected, not stripped. `POST /api/nick` exposes this for `/nick`; on message posts, an invalid nick falls back to `Anonyme`.
   - A room is created on its first message or post-it, never on a visit. Creation goes through its own rate limit (`mayCreate`).
 - `src/web/channels.go`: the room-name regex `^[a-z0-9]+([._-][a-z0-9]+)*$` (max 32 chars) and the `forbidden.json` matcher.

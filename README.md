@@ -137,9 +137,14 @@ Ici, **sloubi = liberté**.
 - Pas de comptes : ton pseudo et ton `clientId` restent dans ton navigateur ; le `clientId` n’est jamais renvoyé aux autres.  
 - Messages et post-its affichés en texte brut (`textContent`), caractères de contrôle retirés côté serveur.  
 - Limites : message 500 caractères, pseudo 24, post-it 280, corps de requête 4 Ko. Un pseudo invalide envoyé avec un message devient `Anonyme`.  
-- Rate-limit par IP sur tout ce qui écrit, sur les WebSockets et sur `/api/check` (ban temporaire pour les bots qui énumèrent).  
+- Rate-limit par IP (IPv6 : par préfixe /64) sur tout ce qui écrit, sur les WebSockets et sur `/api/check` (ban temporaire pour les bots qui énumèrent), plus un plafond large sur toutes les requêtes. 12 WebSockets simultanés par IP au plus.  
+- Timeouts HTTP (en-têtes en 5 s : pas de slowloris), en-têtes de 16 Ko maximum, Gin en mode release.  
+- Textes libres normalisés : NFC, sans caractères de direction ni invisibles (le ZWJ des emojis est gardé), diacritiques plafonnés à 2 par lettre (pas de zalgo).  
 - `forbidden.json` : routes, admin, marques, sondes de bots, injures ; comparaison après normalisation (leet, séparateurs). Jamais servi au client.  
-- WebSocket limité à la même origine, POST en `application/json` uniquement, CSP stricte.  
+- WebSocket limité à la même origine, POST en `application/json` uniquement.  
+- En-têtes : CSP `default-src 'none'` sans style ni script inline, HSTS, `X-Frame-Options`, `nosniff`, COOP/CORP `same-origin`, Permissions-Policy fermée.  
+- Service systemd durci : `deploy/hardening.conf` (utilisateur `www-data`, système en lecture seule sauf `db/`, aucune capacité, appels système filtrés ; score `systemd-analyze security` de 1,2).  
+- Base : WAL reporté dans `chat.sqlite` au démarrage puis toutes les heures.  
 - Polices et Three.js auto-hébergés (`assets/fonts/` OFL, `assets/vendor/three/` MIT) : aucune requête vers un tiers.  
 - Dépendances à jour, `govulncheck` sans vulnérabilité atteignable.  
 

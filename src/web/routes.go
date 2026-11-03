@@ -3,10 +3,13 @@ package web
 import (
 	"log"
 	"mime"
+	"net"
 	"net/http"
+	"os"
 	"regexp"
 	"sloubi/src/chat"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -37,6 +40,52 @@ type server struct {
 	checkLimit  *Limiter // /api/check : cible n°1 des bots
 	wsLimit     *Limiter
 	createLimit *Limiter // fondation de salons
+	anyLimit    *Limiter // toutes les requêtes : plafond large, contre les inondations
+
+	wsMu     sync.Mutex
+	wsPerKey map[string]int // WS ouverts par IP (ou /64)
+	wsTotal  int
+}
+
+const (
+	maxWSPerKey = 12   // plusieurs onglets, ou une famille derrière la même box
+	maxWSTotal  = 5000 // garde-fou global
+)
+
+// clientKey : la clé de rate-limit. IPv4 telle quelle ; IPv6 ramenée à son /64,
+// sinon un attaquant fait tourner les adresses de son préfixe et contourne tout.
+func clientKey(c *gin.Context) string {
+	ip := net.ParseIP(c.ClientIP())
+	if ip == nil {
+		return c.ClientIP()
+	}
+	if v4 := ip.To4(); v4 != nil {
+		return v4.String()
+	}
+	return ip.Mask(net.CIDRMask(64, 128)).String() + "/64"
+}
+
+func (s *server) wsAcquire(key string) bool {
+	s.wsMu.Lock()
+	defer s.wsMu.Unlock()
+	if s.wsPerKey == nil {
+		s.wsPerKey = map[string]int{}
+	}
+	if s.wsTotal >= maxWSTotal || s.wsPerKey[key] >= maxWSPerKey {
+		return false
+	}
+	s.wsPerKey[key]++
+	s.wsTotal++
+	return true
+}
+
+func (s *server) wsRelease(key string) {
+	s.wsMu.Lock()
+	defer s.wsMu.Unlock()
+	if s.wsPerKey[key]--; s.wsPerKey[key] <= 0 {
+		delete(s.wsPerKey, key)
+	}
+	s.wsTotal--
 }
 
 func Run(addr string) {
@@ -62,21 +111,35 @@ func Run(addr string) {
 		checkLimit:  NewLimiter(4, 10, 30, 10*time.Minute),
 		wsLimit:     NewLimiter(0.5, 10, 0, 0),
 		createLimit: NewLimiter(10.0/3600, 10, 0, 0),
+		anyLimit:    NewLimiter(30, 120, 0, 0),
 	}
 
+	// timeouts : sans eux, une connexion qui n'envoie jamais ses en-têtes reste ouverte (slowloris)
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           s.router(),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      30 * time.Second, // les WS posent leurs propres délais après l'upgrade
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    16 << 10,
+	}
 	log.Printf("listening on %s", addr)
-	if err := s.router().Run(addr); err != nil {
+	if err := srv.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}
 }
 
 func (s *server) router() *gin.Engine {
+	if os.Getenv(gin.EnvGinMode) == "" {
+		gin.SetMode(gin.ReleaseMode) // pas de mode debug en prod
+	}
 	r := gin.New()
 	// Caddy est devant, en local : on ne croit X-Forwarded-For que venant de lui
 	if err := r.SetTrustedProxies([]string{"127.0.0.1", "::1"}); err != nil {
 		log.Fatal(err)
 	}
-	r.Use(gin.Logger(), gin.Recovery(), securityHeaders, gzip.Gzip(gzip.DefaultCompression, gzip.WithExcludedPaths([]string{"/ws"})))
+	r.Use(gin.Logger(), gin.Recovery(), securityHeaders, s.floodGuard, gzip.Gzip(gzip.DefaultCompression, gzip.WithExcludedPaths([]string{"/ws"})))
 
 	r.LoadHTMLGlob("views/*.html")
 
@@ -114,13 +177,27 @@ func (s *server) router() *gin.Engine {
 	return r
 }
 
+// floodGuard : un plafond large sur toutes les requêtes (une page en charge ~15).
+func (s *server) floodGuard(c *gin.Context) {
+	if s.anyLimit != nil && !s.anyLimit.Allow(clientKey(c)) {
+		c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"error": "slow down"})
+		return
+	}
+	c.Next()
+}
+
 func securityHeaders(c *gin.Context) {
 	h := c.Writer.Header()
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("X-Frame-Options", "DENY")
 	h.Set("Referrer-Policy", "same-origin")
-	h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data:; "+
-		"style-src 'self' 'unsafe-inline'; font-src 'self'; "+
+	h.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+	h.Set("Cross-Origin-Opener-Policy", "same-origin")
+	h.Set("Cross-Origin-Resource-Policy", "same-origin")
+	h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), browsing-topics=()")
+	// pas de style inline dans le HTML (les scripts passent par le CSSOM, que la CSP n'interdit pas)
+	h.Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; connect-src 'self'; img-src 'self' data:; "+
+		"style-src 'self'; font-src 'self'; manifest-src 'self'; object-src 'none'; "+
 		"base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
 	c.Next()
 }
@@ -146,8 +223,8 @@ func (s *server) channelPage(c *gin.Context) {
 	name := strings.ToLower(raw)
 	if s.forbidden.checkChannel(name) != "" {
 		// l'accueil reprend le nom tapé et l'affiche en rouge
-		if len(raw) > 64 {
-			raw = raw[:64]
+		if utf8.RuneCountInString(raw) > 64 {
+			raw = string([]rune(raw)[:64])
 		}
 		c.HTML(http.StatusNotFound, "home.html", gin.H{"Prefill": raw})
 		return
@@ -160,7 +237,7 @@ func (s *server) channelPage(c *gin.Context) {
 }
 
 func (s *server) check(c *gin.Context) {
-	if !s.checkLimit.Allow(c.ClientIP()) {
+	if !s.checkLimit.Allow(clientKey(c)) {
 		c.JSON(http.StatusTooManyRequests, gin.H{"error": "slow down"})
 		return
 	}
@@ -184,7 +261,7 @@ func (s *server) mayCreate(c *gin.Context, channel string) bool {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "db error"})
 		return false
 	}
-	if !exists && !s.createLimit.Allow(c.ClientIP()) {
+	if !exists && !s.createLimit.Allow(clientKey(c)) {
 		c.JSON(http.StatusTooManyRequests, gin.H{"error": "too many new channels"})
 		return false
 	}
@@ -210,18 +287,35 @@ func readJSON(c *gin.Context, maxBytes int64, v any) bool {
 }
 
 // cleanText retire les caractères de contrôle (sauf \n si keepNewlines) et les espaces autour.
+// maxMarks : diacritiques empilés tolérés sur une lettre (au-delà, c'est du zalgo).
+const maxMarks = 2
+
+// cleanText normalise un texte libre (message, post-it) : NFC, sans caractères de
+// contrôle (sauf \n si keepNewlines), sans caractères de format invisibles (inversion
+// de direction, espaces sans chasse…) hormis le ZWJ des emojis composés, et sans
+// pile de diacritiques.
 func cleanText(s string, keepNewlines bool) string {
-	s = strings.ToValidUTF8(s, "")
-	s = strings.Map(func(r rune) rune {
-		if r == '\n' && keepNewlines {
-			return r
+	s = norm.NFC.String(strings.ToValidUTF8(strings.ReplaceAll(s, "\r\n", "\n"), ""))
+	var b strings.Builder
+	marks := 0
+	for _, r := range s {
+		switch {
+		case r == '\n' && keepNewlines:
+		case unicode.IsControl(r), r == '\u2028', r == '\u2029':
+			continue
+		case unicode.Is(unicode.Cf, r) && r != '\u200d':
+			continue
+		case unicode.Is(unicode.Mn, r) || unicode.Is(unicode.Me, r):
+			if marks++; marks > maxMarks {
+				continue
+			}
+			b.WriteRune(r)
+			continue
 		}
-		if unicode.IsControl(r) || r == ' ' || r == ' ' {
-			return -1
-		}
-		return r
-	}, strings.ReplaceAll(s, "\r\n", "\n"))
-	return strings.TrimSpace(s)
+		marks = 0
+		b.WriteRune(r)
+	}
+	return strings.TrimSpace(b.String())
 }
 
 // Raisons de refus d'un pseudo.
@@ -279,7 +373,7 @@ func (s *server) postMessage(resolve channelResolver) gin.HandlerFunc {
 		if !ok {
 			return
 		}
-		if !s.postLimit.Allow(c.ClientIP()) {
+		if !s.postLimit.Allow(clientKey(c)) {
 			c.JSON(http.StatusTooManyRequests, gin.H{"error": "slow down"})
 			return
 		}
@@ -327,7 +421,7 @@ func (s *server) postMessage(resolve channelResolver) gin.HandlerFunc {
 
 // nick valide un pseudo pour /nick et les paramètres ; renvoie la forme canonique à garder.
 func (s *server) nick(c *gin.Context) {
-	if !s.checkLimit.Allow(c.ClientIP()) {
+	if !s.checkLimit.Allow(clientKey(c)) {
 		c.JSON(http.StatusTooManyRequests, gin.H{"error": "slow down"})
 		return
 	}
@@ -346,7 +440,7 @@ func (s *server) postPostit(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !s.postitLimit.Allow(c.ClientIP()) {
+	if !s.postitLimit.Allow(clientKey(c)) {
 		c.JSON(http.StatusTooManyRequests, gin.H{"error": "slow down"})
 		return
 	}
@@ -408,10 +502,16 @@ func (s *server) ws(resolve channelResolver) gin.HandlerFunc {
 		if !ok {
 			return
 		}
-		if !s.wsLimit.Allow(c.ClientIP()) {
+		key := clientKey(c)
+		if !s.wsLimit.Allow(key) {
 			c.JSON(http.StatusTooManyRequests, gin.H{"error": "slow down"})
 			return
 		}
+		if !s.wsAcquire(key) {
+			c.JSON(http.StatusTooManyRequests, gin.H{"error": "too many connections"})
+			return
+		}
+		defer s.wsRelease(key)
 		conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 		if err != nil {
 			return

@@ -224,7 +224,7 @@ settingsModal.addEventListener('click', (e) => {
 /* ========== Cheat mode (front-side helper only) ========== */
 cheatModeToggle.addEventListener('change', (e) => {
   const on = !!e.target.checked;
-  cheatButton.style.display = on ? 'block' : 'none';
+  cheatButton.hidden = !on;
   if (on) addSystemMessage('Mode Triche : bouton rapide activé (la validation reste côté serveur).');
 });
 quickSloubi.addEventListener('click', () => {
@@ -236,7 +236,7 @@ quickSloubi.addEventListener('click', () => {
 window.addEventListener('beforeinstallprompt', (e) => {
   e.preventDefault();
   deferredPrompt = e;
-  pwaInstallSection.style.display = 'block';
+  pwaInstallSection.hidden = false;
 });
 installButton.addEventListener('click', async () => {
   if (!deferredPrompt) {
@@ -248,11 +248,11 @@ installButton.addEventListener('click', async () => {
   deferredPrompt.prompt();
   try { await deferredPrompt.userChoice; } catch {}
   deferredPrompt = null;
-  pwaInstallSection.style.display = 'none';
+  pwaInstallSection.hidden = true;
 });
 function isIOS() { return /iPhone|iPad|iPod/.test(navigator.userAgent) && !window.MSStream; }
 function isInStandaloneMode() { return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone; }
-if (isInStandaloneMode()) { pwaInstallSection.style.display = 'none'; }
+if (isInStandaloneMode()) { pwaInstallSection.hidden = true; }
 
 /* ========== Ambient messages (fun only) ========== */
 const ambientMessages = [
