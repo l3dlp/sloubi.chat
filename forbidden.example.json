@@ -1,0 +1,20 @@
+{
+  "_doc": [
+    "Exemple minimal : copie-le en forbidden.json, puis complète-le. Le serveur refuse de démarrer sans forbidden.json valide.",
+    "La vraie liste (marques, injures, sondes de bots) n'est pas publiée : elle donnerait aux bots une liste toute prête.",
+    "Normalisation avant comparaison : minuscules, accents retirés, leet → lettres, séparateurs retirés.",
+    "exact : le nom normalisé est égal à l'entrée. Indispensable : chaque route ou fichier servi à la racine (app.js, sw.js…).",
+    "contains : le nom normalisé contient l'entrée (au moins 5 lettres). allow : sous-chaînes retirées avant contains (faux positifs connus)."
+  ],
+  "exact": [
+    "api", "ws", "assets", "static", "app.js", "styles.css", "manifest.json", "icon-192.png", "icon-512.png",
+    "verif.json", "last-sloubi.json", "forbidden.json", "index.html", "favicon.ico", "robots.txt", "sitemap.xml",
+    "sw.js", "service-worker.js", "www", "root", "wp-login.php", "xmlrpc.php", "config.php"
+  ],
+  "contains": [
+    "admin", "moderat", "officiel", "official", "verified", "support", "security", "securite", "webmaster", "postmaster", "hostmaster"
+  ],
+  "allow": [
+    "badminton"
+  ]
+}

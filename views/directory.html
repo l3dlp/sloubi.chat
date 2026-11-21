@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <title>Les salons · Sloubi.chat</title>
+    <meta name="description" content="Le registre de tous les salons de Sloubi.chat : tavernes, forêts, moulins et les autres.">
+    <meta name="robots" content="noindex, nofollow">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#140b07">
+    <link rel="apple-touch-icon" href="/assets/icon-192.png">
+    <link rel="preload" href="/assets/fonts/uncialantiqua-latin.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="preload" href="/assets/fonts/cormorantgaramond-latin.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="stylesheet" href="/assets/fonts/fonts.css">
+    <link rel="stylesheet" href="/assets/directory.css">
+</head>
+<body>
+    <div class="haze" aria-hidden="true"></div>
+
+    <main class="registry">
+        <header class="registry-head">
+            <a href="/" class="registry-mark">Sloubi<span>.chat</span></a>
+            <h1 class="registry-title">Les salons</h1>
+            <p class="registry-stats">
+                <span><strong>{{.Count}}</strong> {{if eq .Count 1}}salon{{else}}salons{{end}}</span>
+                <span aria-hidden="true">·</span>
+                <span><strong>{{.Sloubis}}</strong> sloubis comptés</span>
+            </p>
+        </header>
+
+        {{if .Rows}}
+        <table class="registry-table">
+            <caption class="sr-only">Tous les salons, les plus récemment actifs d'abord</caption>
+            <thead>
+                <tr>
+                    <th scope="col">Salon</th>
+                    <th scope="col" class="num">Sloubis</th>
+                    <th scope="col" class="num">Messages</th>
+                    <th scope="col" class="when">Dernière activité</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{range .Rows}}
+                <tr>
+                    <th scope="row">
+                        <a href="/{{.Name}}" class="chan">/{{.Name}}</a>
+                        {{if ne .Theme "taverne"}}<span class="kind">{{.ThemeName}}</span>{{end}}
+                        {{if .Locked}}<span class="kind locked" title="Gardé par un mot de passe">🔒</span>{{end}}
+                    </th>
+                    {{if .Locked}}
+                    <td class="num"><span class="label">Sloubis</span>·</td>
+                    <td class="num"><span class="label">Messages</span>·</td>
+                    {{else}}
+                    <td class="num"><span class="label">Sloubis</span><span class="sloubis{{if .Sloubis}} lit{{end}}">{{.Sloubis}}</span></td>
+                    <td class="num"><span class="label">Messages</span>{{.Messages}}</td>
+                    {{end}}
+                    <td class="when"><time datetime="{{.LastActive}}">{{.Ago}}</time></td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+        {{else}}
+        <p class="registry-empty">Aucun salon pour l'instant. <a href="/">Fonde le premier.</a></p>
+        {{end}}
+
+        <footer class="registry-foot"><a href="/">← Fonder ou rejoindre un salon</a></footer>
+    </main>
+</body>
+</html>

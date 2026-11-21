@@ -2,10 +2,10 @@
 <html lang="fr">
 <head>
     <title>/{{.Chan}} · Sloubi.chat</title>
-    <meta name="description" content="Une taverne enfumée où l'on compte les sloubis.">
+    <meta name="description" content="{{.Theme.Description}}">
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <meta name="theme-color" content="#140b07">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
+    <meta name="theme-color" content="{{.Theme.Color}}">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Sloubi">
@@ -17,62 +17,286 @@
     <link rel="modulepreload" href="/assets/vendor/three/three.core.js">
     <link rel="stylesheet" href="/assets/fonts/fonts.css">
     <link rel="stylesheet" href="/assets/room.css">
+    <link rel="stylesheet" href="/assets/themes.css">
 </head>
-<body class="room" data-chan="{{.Chan}}">
+<body class="room" data-chan="{{.Chan}}" data-theme="{{.Theme.ID}}"{{if .Locked}} data-locked{{end}}>
     <canvas id="smoke" class="smoke" aria-hidden="true"></canvas>
     <div class="veil" aria-hidden="true"></div>
 
     <div class="room-shell">
         <header class="room-bar">
-            <a href="/" class="room-mark" aria-label="Sloubi.chat, changer de taverne">Sloubi<span>.chat</span></a>
+            <a href="/" class="room-mark" aria-label="Sloubi.chat : revenir à l'accueil">Sloubi<span>.chat</span></a>
 
             <div class="room-chan">
-                <span class="room-chan-label">Taverne</span>
+                <span class="room-chan-label">{{.Theme.Name}}</span>
                 <span class="room-chan-name">/{{.Chan}}</span>
-                <button id="copyLink" class="icon-btn" type="button" aria-label="Copier le lien de la taverne">
+                <button id="copyLink" class="icon-btn" type="button" aria-label="Copier le lien du salon">
                     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 15l6-6M10.5 6.5l1.8-1.8a4.2 4.2 0 0 1 6 6l-1.8 1.8M13.5 17.5l-1.8 1.8a4.2 4.2 0 0 1-6-6l1.8-1.8"/></svg>
                 </button>
             </div>
 
-            <button id="settingsButton" class="icon-btn room-gear" type="button" aria-label="Paramètres">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7"/></svg>
-            </button>
+            <div class="bar-right">
+                <!-- le score : anecdotique, comme dans un jeu -->
+                <div class="score" id="score" title="{{.Theme.CounterLabel}}">
+                    <span class="counter-value" id="sloubiCount" aria-live="polite">0</span>
+                    <span class="score-label">{{.Theme.CounterLabel}}</span>
+                    <span class="counter-sub" id="counterSub" hidden></span>
+                </div>
+                <button id="settingsButton" class="bar-btn" type="button">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7"/></svg>
+                    <span class="bar-btn-label">Options</span>
+                </button>
+            </div>
         </header>
 
-        <section class="counter" aria-label="Sloubis comptés">
-            <div class="counter-label">sloubis comptés</div>
-            <div class="counter-value" id="sloubiCount" aria-live="polite">0</div>
-        </section>
+        <!-- la navigation : des icônes toujours là (à gauche en paysage, en haut en portrait) -->
+        <nav class="app-nav" id="appNav" aria-label="Vues du salon">
+            <button class="nav-item is-active" type="button" data-view="chat" aria-current="page">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/></svg>
+                <span>Discussion</span>
+            </button>
+            <button class="nav-item" type="button" data-view="favoris">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/></svg>
+                <span>Favoris</span>
+            </button>
+            {{if .Calls}}
+            <button class="nav-item" type="button" data-view="image">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="14" rx="2"/><circle cx="9" cy="10" r="1.8"/><path d="M4 17l5-5 4 4 2.5-2.5L20 18"/></svg>
+                <span>Images</span><b class="nav-count" data-count="image"></b>
+            </button>
+            <button class="nav-item" type="button" data-view="video">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10.5l5-3v9l-5-3"/></svg>
+                <span>Vidéos</span><b class="nav-count" data-count="video"></b>
+            </button>
+            <button class="nav-item" type="button" data-view="document">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h7l4 4v14H7z"/><path d="M14 3v4h4M9.5 12h6M9.5 15.5h6"/></svg>
+                <span>Documents</span><b class="nav-count" data-count="document"></b>
+            </button>
+            {{end}}
+            <button class="nav-item" type="button" id="navPostit" aria-pressed="false" aria-controls="postit">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14v11l-5 5H5z"/><path d="M14 20v-5h5M8.5 9h7M8.5 12.5h4"/></svg>
+                <span>Post-it</span>
+            </button>
+        </nav>
 
-        <main class="room-chat">
-            <div class="chat-messages" id="chatMessages" role="log" aria-live="polite" aria-label="Conversation">
-                <div class="system-message">La fumée s'écarte. Bienvenue, voyageur.</div>
+        <main class="room-main">
+        <section class="thread" id="thread" aria-label="Discussion">
+
+        {{if eq .Theme.ID "foret"}}
+        <nav class="biomes" id="biomes" aria-label="Microbiotes" hidden></nav>
+        {{end}}
+
+        {{if .Calls}}
+        <section class="stage" id="stage" aria-label="Live" hidden>
+            <video id="stageVideo" class="stage-video" playsinline autoplay muted></video>
+            <div class="stage-bar">
+                <span class="stage-who"><span class="stage-dot" aria-hidden="true"></span><span id="stageWho"></span></span>
+                <button id="stageFull" class="icon-btn stage-full" type="button" aria-label="Plein écran">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+                </button>
             </div>
-        </main>
+            <p class="stage-wait" id="stageWait" hidden>L'image arrive…</p>
+        </section>
+        {{end}}
+
+        <div class="room-chat">
+            <div class="chat-messages" id="chatMessages" role="log" aria-live="polite" aria-label="Messages de la discussion">
+                <div class="system-message">{{.Theme.Welcome}}</div>
+            </div>
+
+            <form id="gate" class="gate" hidden>
+                <svg class="gate-lock" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/></svg>
+                <h1 class="gate-title">Ce lieu est gardé</h1>
+                <p class="gate-text">Il faut le mot de passe pour entrer.</p>
+                <div class="whisper gate-field">
+                    <input type="password" id="gatePassword" class="whisper-input" placeholder="Mot de passe"
+                           autocomplete="current-password" maxlength="128" aria-label="Mot de passe" required>
+                    <button class="whisper-send" type="submit" aria-label="Entrer">
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13M13 6l6 6-6 6"/></svg>
+                    </button>
+                </div>
+                <p class="gate-error" id="gateError" aria-live="assertive"></p>
+            </form>
+        </div>
 
         <div class="room-bottom">
+            {{if .Calls}}
+            <section class="call" id="call" data-state="idle" aria-label="Appel">
+                <ul class="call-people" id="callPeople" aria-label="Dans l'appel"></ul>
+                <p class="call-note" id="callNote" aria-live="polite"></p>
+                <div class="call-relay" id="callRelay" role="alertdialog" aria-labelledby="callRelayText" hidden>
+                    <p id="callRelayText"></p>
+                    <div class="call-relay-actions">
+                        <button type="button" class="call-btn" data-relay="camera">Ma caméra</button>
+                        <button type="button" class="call-btn" data-relay="screen" id="relayScreen">Mon écran</button>
+                        <button type="button" class="call-btn call-quiet" data-relay="no">Non merci</button>
+                    </div>
+                </div>
+                <div class="call-actions">
+                    <button id="callBell" class="call-btn call-round" type="button" aria-pressed="false" aria-label="Me prévenir quand quelqu'un appelle" title="Me prévenir quand quelqu'un appelle" hidden>
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15zM10 20.5a2 2 0 0 0 4 0"/><path class="slash" d="M4 4l16 16"/></svg>
+                    </button>
+                    <button id="callJoin" class="call-btn call-join" type="button">
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2"/></svg>
+                        <span id="callJoinLabel">Lancer l'appel</span>
+                    </button>
+                    <button id="callWatch" class="call-btn call-quiet" type="button" title="Écouter et regarder, sans micro">Sans micro</button>
+                    <div class="live-wrap">
+                        <button id="callLive" class="call-btn" type="button" aria-haspopup="menu" aria-expanded="false" hidden>
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10.5l5-3v9l-5-3"/></svg>
+                            <span id="callLiveLabel">Passer en live</span>
+                        </button>
+                        <div class="live-menu" id="liveMenu" role="menu" hidden>
+                            <button type="button" role="menuitem" data-src="camera">Ma caméra</button>
+                            <button type="button" role="menuitem" data-src="screen" id="liveScreen">Mon écran</button>
+                        </div>
+                    </div>
+                    <button id="callMute" class="call-btn call-round" type="button" aria-pressed="false" aria-label="Couper le micro" hidden>
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/><path class="slash" d="M4 4l16 16"/></svg>
+                    </button>
+                    <button id="callLeave" class="call-btn call-round call-leave" type="button" aria-label="Raccrocher" hidden>
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 14.5c5-4.7 13-4.7 18 0l-2.4 2.6-3.6-1.4v-2.4a12 12 0 0 0-6 0v2.4L5.4 17z"/></svg>
+                    </button>
+                </div>
+                <div id="callAudio" hidden></div>
+            </section>
+            {{end}}
+            {{if eq .Theme.ID "taverne"}}
             <div id="cheatButton" class="cheat-button" hidden>
                 <button id="quickSloubi" class="quick-sloubi-btn" type="button">✦ Sloubi rapide</button>
             </div>
+            {{end}}
+            {{if .Calls}}
+            <ul class="uploads" id="uploads" aria-label="Envois en cours" hidden></ul>
+            {{end}}
             <div class="whisper">
+                {{if .Calls}}
+                <button id="attachButton" class="whisper-attach" type="button" aria-label="Joindre des photos, vidéos ou documents" title="Joindre des fichiers">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 11.5l-8.2 8.2a5 5 0 0 1-7.1-7.1l8.6-8.6a3.4 3.4 0 0 1 4.8 4.8l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8"/></svg>
+                </button>
+                <input type="file" id="fileInput" multiple hidden>
+                <div class="rec-wrap">
+                    <button id="recordButton" class="whisper-attach" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="recordMenu" aria-label="Enregistrer un message vocal ou une vidéo" title="Enregistrer">
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+                    </button>
+                    <div class="rec-menu" id="recordMenu" role="menu" hidden>
+                        <button type="button" role="menuitem" data-rec="audio">
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+                            Message vocal
+                        </button>
+                        <button type="button" role="menuitem" data-rec="video">
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10.5l5-3v9l-5-3"/></svg>
+                            Vidéo
+                        </button>
+                    </div>
+                </div>
+                {{end}}
                 <input type="text" id="chatInput" class="whisper-input"
-                       placeholder="Écrivez « sloubi 1 » pour compter..." maxlength="500"
-                       autocomplete="off" aria-label="Votre message">
-                <button id="sendButton" class="whisper-send" type="button" aria-label="Envoyer">
+                       placeholder="{{.Theme.Placeholder}}" maxlength="500"
+                       autocomplete="off" autocapitalize="sentences" enterkeyhint="send" aria-label="Ton message">
+                <button id="sendButton" class="whisper-send" type="button">
                     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13M13 6l6 6-6 6"/></svg>
+                    <span class="send-label">Envoyer</span>
                 </button>
             </div>
         </div>
+        </section>
+
+        <!-- la médiathèque : favoris, images, vidéos, documents (app.js) -->
+        <section class="library" id="library" aria-labelledby="libraryTitle" hidden>
+            <header class="library-head">
+                <button id="libraryBack" class="bar-btn" type="button">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
+                    <span class="bar-btn-label">Discussion</span>
+                </button>
+                <div>
+                    <h2 class="library-title" id="libraryTitle"></h2>
+                    <p class="library-sub" id="librarySub"></p>
+                </div>
+            </header>
+            {{if .Calls}}
+            <div class="quota" id="quota" hidden>
+                <div class="quota-bar"><i id="quotaFill"></i></div>
+                <p class="quota-text" id="quotaText">Espace partagé</p>
+            </div>
+            {{end}}
+            <div class="library-tools" id="libraryTools"></div>
+            <div class="library-body" id="libraryBody"></div>
+        </section>
+        </main>
     </div>
 
-    <section id="postit" class="postit" aria-label="Parchemin de la taverne" hidden>
+
+    {{if .Calls}}
+    <div class="drop-zone" id="dropZone" hidden>
+        <p>Lâche tes fichiers ici.<br><span>On les range tout seuls : images, vidéos, documents.</span></p>
+    </div>
+    {{end}}
+
+    {{if .Calls}}
+    <!-- l'enregistreur maison : un message vocal ou une vidéo, compressés par le navigateur (recorder.js) -->
+    <div class="recorder" id="recorder" role="dialog" aria-modal="true" aria-labelledby="recTitle" hidden>
+        <div class="recorder-card">
+            <h2 class="rec-title" id="recTitle">Message vocal</h2>
+            <div class="rec-stage" id="recStage">
+                <video id="recLive" class="rec-live" playsinline muted autoplay hidden></video>
+                <canvas id="recMeter" class="rec-meter" width="600" height="120" hidden></canvas>
+                <video id="recReview" class="rec-live" playsinline controls hidden></video>
+                <audio id="recListen" class="rec-listen" controls hidden></audio>
+            </div>
+            <p class="rec-time" id="recTime" aria-live="off">0:00</p>
+            <p class="rec-note" id="recNote" aria-live="polite"></p>
+            <div class="rec-actions">
+                <button id="recStart" class="rec-big rec-go" type="button"><span class="rec-dot" aria-hidden="true"></span> Enregistrer</button>
+                <button id="recStop" class="rec-big rec-halt" type="button" hidden><span class="rec-square" aria-hidden="true"></span> Arrêter</button>
+                <button id="recSend" class="rec-big rec-go" type="button" hidden>Envoyer</button>
+                <button id="recRetry" class="rec-small" type="button" hidden>Recommencer</button>
+                <button id="recFlip" class="rec-small" type="button" hidden>Retourner la caméra</button>
+                <button id="recCancel" class="rec-small" type="button">Annuler</button>
+            </div>
+        </div>
+    </div>
+    {{end}}
+
+    <!-- la visionneuse : une image ou une vidéo en grand -->
+    <div class="lightbox" id="lightbox" role="dialog" aria-modal="true" aria-label="Visionneuse" hidden>
+        <div class="lightbox-stage" id="lightboxStage"></div>
+        <p class="lightbox-caption" id="lightboxCaption"></p>
+        <button class="lightbox-btn lightbox-close" id="lightboxClose" type="button" aria-label="Fermer">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+        <button class="lightbox-btn lightbox-prev" id="lightboxPrev" type="button" aria-label="Précédent">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
+        </button>
+        <button class="lightbox-btn lightbox-next" id="lightboxNext" type="button" aria-label="Suivant">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>
+        </button>
+        <a class="lightbox-btn lightbox-dl" id="lightboxDl" href="#" download aria-label="Télécharger">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>
+        </a>
+    </div>
+
+    {{if eq .Theme.ID "foret"}}
+    <aside id="codex" class="codex" aria-labelledby="codexTitle" hidden>
+        <div class="codex-head">
+            <h2 id="codexTitle" class="codex-title">#</h2>
+            <button id="codexClose" class="icon-btn" type="button" aria-label="Refermer l'encyclopédie">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+            </button>
+        </div>
+        <p class="codex-sub" id="codexSub"></p>
+        <ol class="codex-list" id="codexList"></ol>
+    </aside>
+    {{end}}
+
+    <section id="postit" class="postit" aria-label="Parchemin" hidden>
         <div class="postit-head" id="postitHandle" tabindex="0" title="Déplacer (flèches au clavier)">
             <span class="postit-title">Parchemin</span>
             <button id="postitClose" class="postit-close" type="button" aria-label="Refermer le parchemin">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
             </button>
         </div>
-        <textarea id="postitText" class="postit-text" maxlength="280" placeholder="Une note pour toute la taverne…" aria-label="Texte du parchemin"></textarea>
+        <textarea id="postitText" class="postit-text" maxlength="280" placeholder="Une note pour tout le monde…" aria-label="Texte du parchemin"></textarea>
         <div class="postit-foot"><span id="postitCount">0</span>/280</div>
     </section>
     <button id="postitPin" class="postit-pin" type="button" aria-label="Ouvrir le parchemin" hidden>
@@ -88,14 +312,18 @@
                 </button>
             </div>
             <div class="settings-body">
-                <label class="setting-item">
-                    <span class="setting-label">Pseudonyme</span>
-                    <input type="text" id="nicknameInput" class="nickname-input" placeholder="Votre nom" maxlength="24">
-                </label>
+                <div class="setting-item">
+                    <label class="setting-label" for="nicknameInput">Pseudonyme</label>
+                    <div class="setting-field">
+                        <input type="text" id="nicknameInput" class="nickname-input" placeholder="Ton pseudo" maxlength="24" autocomplete="nickname">
+                        <button id="nickSave" class="change-btn" type="button" disabled>Changer</button>
+                    </div>
+                </div>
                 <div class="setting-item" id="pwaInstallSection" hidden>
                     <span class="setting-label">Installer l'application</span>
                     <button id="installButton" class="install-button" type="button">Installer</button>
                 </div>
+                {{if eq .Theme.ID "taverne"}}
                 <label class="setting-item">
                     <span class="setting-label">Mode Triche</span>
                     <span class="toggle-switch">
@@ -103,12 +331,50 @@
                         <span class="toggle-slider"></span>
                     </span>
                 </label>
+                {{end}}
+
+                <form class="place" id="placeSection" hidden>
+                    <div class="place-head">
+                        <span class="setting-label" id="placeTitle">Ton lieu</span>
+                        <span class="place-badge">créateur</span>
+                    </div>
+                    <fieldset class="theme-pick" id="themePick">
+                        <legend class="sr-only">Décor (change tout de suite, pour tout le monde)</legend>
+                        {{range .Themes}}
+                        <label class="theme-card" data-card="{{.ID}}">
+                            <input type="radio" name="theme" value="{{.ID}}"{{if eq .ID $.Theme.ID}} checked{{end}}>
+                            <span class="theme-swatch" aria-hidden="true"></span>
+                            <span class="theme-name">{{.Name}}</span>
+                            <span class="theme-desc">{{.CounterLabel}}</span>
+                        </label>
+                        {{end}}
+                    </fieldset>
+                    <p class="place-hint">Un clic sur un décor le change tout de suite, pour tout le monde.</p>
+                    <div class="place-field">
+                        <label class="setting-label" id="placePwLabel" for="placePassword">Mot de passe</label>
+                        <div class="setting-field">
+                            <input type="password" id="placePassword" class="nickname-input" placeholder="aucun, lieu ouvert"
+                                   autocomplete="new-password" maxlength="128">
+                            <button id="placePwSave" class="change-btn" type="button" disabled>Changer</button>
+                        </div>
+                    </div>
+                    <div class="place-actions">
+                        <button id="placeRemove" class="change-btn change-quiet" type="button" hidden>Retirer le mot de passe</button>
+                        <button id="placeLink" class="place-link" type="button" hidden>Copier mon lien de créateur</button>
+                    </div>
+                    <p class="place-hint">Avec un mot de passe, celles et ceux qui l’ont peuvent aussi s’appeler, jusqu’à 6 à la fois.</p>
+                    <p class="place-note" id="placeNote" aria-live="polite"></p>
+                </form>
                 <a href="https://github.com/l3dlp/sloubi.chat" class="setting-item setting-link">Le code est sur GitHub ↗</a>
             </div>
         </div>
     </div>
 
+    <script src="/assets/viewport.js" type="module"></script>
     <script src="/assets/app.js" type="module"></script>
-    <script src="/assets/room-fx.js" type="module"></script>
+    <script src="/assets/library.js" type="module"></script>
+    {{if .Calls}}<script src="/assets/recorder.js" type="module"></script>{{end}}
+    <script src="/assets/{{.Theme.FX}}" type="module"></script>
+    {{if .Calls}}<script src="/assets/call.js" type="module"></script>{{end}}
 </body>
 </html>

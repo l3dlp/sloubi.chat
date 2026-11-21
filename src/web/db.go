@@ -21,7 +21,8 @@ const DefaultChannel = "chante"
 const tsLayout = "2006-01-02T15:04:05.000Z"
 
 type Store struct {
-	DB *sql.DB
+	DB     *sql.DB
+	secret []byte // clé HMAC des cookies d'accès, tirée une fois et gardée en base
 	// wmu sérialise les écritures : la vérification "N = max + 1" et l'INSERT
 	// doivent être atomiques, sinon deux "sloubi N" simultanés passent tous les deux.
 	wmu sync.Mutex
@@ -41,6 +42,10 @@ func openStore(path string) (*Store, error) {
 	if err := s.migrate(); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migration: %w", err)
+	}
+	if s.secret, err = s.loadSecret(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("secret: %w", err)
 	}
 	// reporte le WAL dans le fichier principal : une copie de chat.sqlite seul reste
 	// une sauvegarde valable, et le WAL ne grossit pas sans fin
@@ -93,8 +98,79 @@ func (s *Store) migrate() error {
 		text TEXT NOT NULL,
 		updated_at TEXT NOT NULL,
 		updated_by TEXT
+	);
+	CREATE TABLE IF NOT EXISTS meta (
+		key TEXT PRIMARY KEY,
+		value BLOB NOT NULL
+	);
+	CREATE TABLE IF NOT EXISTS files (
+		id TEXT PRIMARY KEY,
+		channel TEXT NOT NULL,
+		name TEXT NOT NULL,
+		mime TEXT NOT NULL,
+		kind TEXT NOT NULL,
+		size INTEGER NOT NULL,
+		w INTEGER,
+		h INTEGER,
+		thumb INTEGER NOT NULL DEFAULT 0,
+		created_at TEXT NOT NULL
+	);
+	CREATE INDEX IF NOT EXISTS idx_files_channel_kind ON files(channel, kind);
+	CREATE TABLE IF NOT EXISTS video_meta (
+		provider TEXT NOT NULL,
+		vid TEXT NOT NULL,
+		title TEXT,
+		author TEXT,
+		thumb INTEGER NOT NULL DEFAULT 0,
+		fetched_at TEXT NOT NULL,
+		PRIMARY KEY (provider, vid)
+	);
+	CREATE TABLE IF NOT EXISTS likes (
+		message_id INTEGER PRIMARY KEY,
+		n INTEGER NOT NULL
+	);
+	CREATE TABLE IF NOT EXISTS link_clicks (
+		message_id INTEGER NOT NULL,
+		idx INTEGER NOT NULL,
+		n INTEGER NOT NULL,
+		PRIMARY KEY (message_id, idx)
+	);
+	CREATE TABLE IF NOT EXISTS push_subs (
+		endpoint TEXT NOT NULL,
+		channel TEXT NOT NULL,
+		p256dh TEXT NOT NULL,
+		auth TEXT NOT NULL,
+		tag TEXT,
+		created_at TEXT NOT NULL,
+		PRIMARY KEY (endpoint, channel)
 	);`); err != nil {
 		return err
+	}
+
+	// v4 : un message peut porter un fichier
+	if ok, err := s.hasColumn("messages", "file_id"); err != nil {
+		return err
+	} else if !ok {
+		if _, err := s.DB.Exec(`ALTER TABLE messages ADD COLUMN file_id TEXT`); err != nil {
+			return err
+		}
+	}
+
+	// v3 : thème, créateur et mot de passe de chaque lieu
+	for col, def := range map[string]string{
+		"theme":      `TEXT NOT NULL DEFAULT '` + DefaultTheme + `'`,
+		"owner_hash": "TEXT",
+		"pw_hash":    "TEXT",
+	} {
+		ok, err := s.hasColumn("channels", col)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			if _, err := s.DB.Exec(`ALTER TABLE channels ADD COLUMN ` + col + ` ` + def); err != nil {
+				return err
+			}
+		}
 	}
 
 	// v1 → v2 : les messages existants appartiennent à la taverne historique.
@@ -115,7 +191,20 @@ func (s *Store) migrate() error {
 	CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_channel_sloubi ON messages(channel, sloubi_number);
 	INSERT OR IGNORE INTO channels (name, created_at, last_message_at)
 		SELECT channel, MIN(ts), MAX(ts) FROM messages GROUP BY channel;`)
-	return err
+	if err != nil {
+		return err
+	}
+	// les #mots de la forêt ; à la création, on reprend les messages déjà écrits
+	var hasTags int
+	if err := s.DB.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'tags'`).Scan(&hasTags); err != nil {
+		return err
+	}
+	if hasTags == 0 {
+		if err := s.createTags(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 var sloubiExactRe = regexp.MustCompile(`(?i)\bsloubi\s*(\d+)\b`)
@@ -150,8 +239,14 @@ func (s *Store) insertMessage(m chat.Message) (out chat.Message, created bool, e
 	m.TimestampISO = now()
 	m.SloubiNumber = nil
 
-	// valide seulement "sloubi N" avec N = dernier + 1, et pas deux fois de suite par le même auteur
-	if matches := sloubiExactRe.FindStringSubmatch(m.Message); len(matches) == 2 {
+	theme := DefaultTheme
+	if err := tx.QueryRow(`SELECT theme FROM channels WHERE name = ?`, m.Channel).Scan(&theme); err != nil && err != sql.ErrNoRows {
+		return m, false, err
+	}
+
+	// valide seulement "sloubi N" avec N = dernier + 1, et pas deux fois de suite par le même auteur.
+	// On ne compte les sloubis qu'à la taverne.
+	if matches := sloubiExactRe.FindStringSubmatch(m.Message); len(matches) == 2 && theme == DefaultTheme {
 		claimed, _ := strconv.Atoi(matches[1])
 		current, lastClient, err := s.lastSloubiEntry(tx, m.Channel)
 		if err != nil {
@@ -180,12 +275,19 @@ func (s *Store) insertMessage(m chat.Message) (out chat.Message, created bool, e
 	if m.ID, err = res.LastInsertId(); err != nil {
 		return m, false, err
 	}
+	for _, tag := range extractTags(m.Message) {
+		if _, err := tx.Exec(`INSERT INTO tags (channel, tag, message_id) VALUES (?,?,?)`, m.Channel, tag, m.ID); err != nil {
+			return m, false, err
+		}
+	}
 	return m, created, tx.Commit()
 }
 
 func (s *Store) lastMessages(channel string, limit int) ([]chat.Message, error) {
-	rows, err := s.DB.Query(`SELECT id, channel, client_id, nickname, message, ts, sloubi_number
-		FROM messages WHERE channel = ? ORDER BY id DESC LIMIT ?`, channel, limit)
+	rows, err := s.DB.Query(`SELECT m.id, m.channel, m.client_id, m.nickname, m.message, m.ts, m.sloubi_number, COALESCE(l.n, 0),
+			f.id, f.name, f.mime, f.kind, f.size, f.w, f.h, f.thumb
+		FROM messages m LEFT JOIN likes l ON l.message_id = m.id LEFT JOIN files f ON f.id = m.file_id
+		WHERE m.channel = ? ORDER BY m.id DESC LIMIT ?`, channel, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -194,8 +296,16 @@ func (s *Store) lastMessages(channel string, limit int) ([]chat.Message, error) 
 	for rows.Next() {
 		var m chat.Message
 		var n sql.NullInt64
-		if err := rows.Scan(&m.ID, &m.Channel, &m.ClientID, &m.Nickname, &m.Message, &m.TimestampISO, &n); err != nil {
+		var fid, fname, fmime, fkind sql.NullString
+		var fsize, fw, fh sql.NullInt64
+		var fthumb sql.NullBool
+		if err := rows.Scan(&m.ID, &m.Channel, &m.ClientID, &m.Nickname, &m.Message, &m.TimestampISO, &n, &m.Likes,
+			&fid, &fname, &fmime, &fkind, &fsize, &fw, &fh, &fthumb); err != nil {
 			return nil, err
+		}
+		if fid.Valid {
+			m.File = &chat.FileRef{ID: fid.String, Name: fname.String, Mime: fmime.String, Kind: fkind.String,
+				Size: fsize.Int64, W: int(fw.Int64), H: int(fh.Int64), Thumb: fthumb.Bool}
 		}
 		if n.Valid {
 			v := int(n.Int64)
@@ -209,6 +319,9 @@ func (s *Store) lastMessages(channel string, limit int) ([]chat.Message, error) 
 	// reverse to chronological asc for playback
 	for i, j := 0, len(rev)-1; i < j; i, j = i+1, j-1 {
 		rev[i], rev[j] = rev[j], rev[i]
+	}
+	if err := s.fillClicks(channel, rev); err != nil {
+		return nil, err
 	}
 	return rev, nil
 }
@@ -228,6 +341,38 @@ func (s *Store) lastSloubi(channel string) (*chat.Message, error) {
 	default:
 		return nil, err
 	}
+}
+
+// ChannelInfo : une ligne de l'annuaire /_/.
+type ChannelInfo struct {
+	Name       string
+	Theme      string
+	Locked     bool
+	CreatedAt  string
+	LastActive string
+	Messages   int
+	Sloubis    int
+}
+
+// listChannels renvoie les salons, les plus récemment actifs d'abord.
+func (s *Store) listChannels(limit int) ([]ChannelInfo, error) {
+	rows, err := s.DB.Query(`SELECT c.name, c.theme, c.pw_hash IS NOT NULL, c.created_at, COALESCE(c.last_message_at, c.created_at),
+			COUNT(m.id), COALESCE(MAX(m.sloubi_number), 0)
+		FROM channels c LEFT JOIN messages m ON m.channel = c.name
+		GROUP BY c.name ORDER BY 5 DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ChannelInfo
+	for rows.Next() {
+		var ci ChannelInfo
+		if err := rows.Scan(&ci.Name, &ci.Theme, &ci.Locked, &ci.CreatedAt, &ci.LastActive, &ci.Messages, &ci.Sloubis); err != nil {
+			return nil, err
+		}
+		out = append(out, ci)
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) postit(channel string) (chat.Postit, error) {

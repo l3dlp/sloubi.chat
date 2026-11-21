@@ -1,59 +1,181 @@
 <!DOCTYPE html>
 <html lang="fr">
 <head>
-    <title>Sloubi.chat · Fonde ta taverne</title>
-    <meta name="description" content="Tape le nom de ta taverne, et compte les sloubis avec tes compagnons.">
+    <title>Sloubi.chat · un salon, une adresse</title>
+    <meta name="description" content="Une messagerie privée à ton adresse : on y écrit, on s'y appelle, on partage photos, vidéos, messages vocaux et documents. Pas de compte, pas de pub, pas de pistage. Logiciel libre (MIT).">
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#1a0f08">
+    <meta name="theme-color" content="#0a0a09" media="(prefers-color-scheme: dark)">
+    <meta name="theme-color" content="#fafaf7" media="(prefers-color-scheme: light)">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Sloubi">
     <link rel="manifest" href="/manifest.json">
     <link rel="apple-touch-icon" href="/assets/icon-192.png">
-    <link rel="preload" href="/assets/fonts/uncialantiqua-latin.woff2" as="font" type="font/woff2" crossorigin>
-    <link rel="preload" href="/assets/fonts/medievalsharp-latin.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="preload" href="/assets/fonts/permanentmarker.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="preload" href="/assets/fonts/archivo-regular.woff2" as="font" type="font/woff2" crossorigin>
     <link rel="stylesheet" href="/assets/fonts/fonts.css">
+    <link rel="stylesheet" href="/assets/marker.css">
     <link rel="stylesheet" href="/assets/home.css">
 </head>
-<body data-prefill="{{.Prefill}}">
-    <div class="fx fx-emerald" aria-hidden="true"></div>
-    <div class="fx fx-lava" aria-hidden="true"></div>
-    <div class="fx fx-scanlines" aria-hidden="true"></div>
-
-    <main class="home">
-        <header class="brand">
-            <div class="brand-name">Sloubi.chat</div>
-            <div class="brand-tag">Fonde ta taverne. Compte les sloubis.</div>
-        </header>
-
-        <form class="prompt" id="prompt" autocomplete="off" novalidate>
-            <label class="prompt-line" for="chanInput">
-                <span class="prompt-slash" aria-hidden="true">/</span>
-                <span class="prompt-field">
-                    <span class="prompt-mirror" id="chanMirror" aria-hidden="true"></span>
-                    <input id="chanInput" class="prompt-input" type="text" name="chan"
-                           maxlength="32" spellcheck="false" autocapitalize="none" autocorrect="off"
-                           enterkeyhint="go" inputmode="url" placeholder="________"
-                           aria-describedby="chanHint" aria-label="Nom de ta taverne">
-                </span>
-                <span class="prompt-cursor" id="chanCursor" aria-hidden="true"></span>
-            </label>
-            <p class="prompt-hint" id="chanHint" aria-live="polite">Tape le nom de ta taverne</p>
-            <p class="prompt-rule">lettres, chiffres, et un seul <code>.</code> <code>_</code> <code>-</code> à la fois</p>
-        </form>
-
-        <nav class="elsewhere" aria-label="Tavernes">
-            <a href="/chante" class="elsewhere-main">ou rejoins la taverne historique <strong>/chante</strong></a>
-            <div class="recent" id="recent" hidden>
-                <span>Tes tavernes :</span>
-            </div>
+<body data-prefill="{{.Prefill}}" data-state="empty">
+    <header class="top">
+        <a href="/" class="wordmark" aria-label="Sloubi.chat, accueil">SLOUBI<span>.CHAT</span></a>
+        <nav class="top-nav" aria-label="Sur cette page">
+            <a href="#lieux">Les lieux</a>
+            <a href="#usages">Ce qu'on y fait</a>
+            <a href="#nom">Le nom</a>
+            <a href="#libre">Libre</a>
         </nav>
+    </header>
 
-        <footer class="home-foot">
-            <a href="https://github.com/l3dlp/sloubi.chat">Le code est sur GitHub</a>
-        </footer>
+    <main>
+        <section class="hero" id="haut" aria-labelledby="heroTitle">
+            <h1 class="display" id="heroTitle"><span class="accent">Un salon,</span><br>une adresse.</h1>
+            <p class="intro">Tape un nom, tu as ta messagerie privée. On y écrit, on s'y appelle, on y partage photos, vidéos, messages vocaux et documents, rangés tout seuls. <em>Pas de compte, pas de pub, pas de pistage.</em></p>
+
+            <form class="claim" id="prompt" autocomplete="off" novalidate>
+                <label class="claim-line" for="chanInput">
+                    <span class="claim-host" aria-hidden="true">sloubi.chat/</span>
+                    <input id="chanInput" class="claim-input" type="text" name="chan"
+                           maxlength="32" spellcheck="false" autocapitalize="none" autocorrect="off"
+                           enterkeyhint="go" inputmode="url" placeholder="ton-salon"
+                           aria-describedby="chanHint chanRule" aria-label="Nom de ton salon">
+                    <button class="claim-go" type="submit" aria-label="Entrer">
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12.2c5.2-.3 10.4-.2 15.2.1M13.4 6.2c2.2 2 4.2 4 6 6-1.9 1.9-3.9 3.9-6 5.8"/></svg>
+                    </button>
+                </label>
+                <p class="claim-hint" id="chanHint" aria-live="polite">Lettres, chiffres, et un seul <code>.</code> <code>_</code> <code>-</code> à la fois.</p>
+
+                <div class="claim-key" id="homeKey" hidden>
+                    <label class="claim-key-label" for="homePass">Ce salon est gardé. Mot de passe de <b>/<span id="homeKeyName"></span></b> :</label>
+                    <input type="password" id="homePass" class="claim-key-input" maxlength="128"
+                           autocomplete="current-password" enterkeyhint="go" aria-describedby="homeKeyErr">
+                    <p class="claim-key-err" id="homeKeyErr" aria-live="assertive"></p>
+                </div>
+                <p class="claim-rule" id="chanRule">32 caractères au plus. Si le salon n'existe pas, il naît à ton premier message, et tu en es le créateur.</p>
+            </form>
+
+            <p class="elsewhere">
+                <a href="/chante">Le salon historique, <b>/chante</b></a>
+                <span class="recent" id="recent" hidden><span>Tes salons :</span></span>
+            </p>
+        </section>
+
+        <section class="block" id="lieux" aria-labelledby="lieuxTitle">
+            <p class="kicker">Six lieux</p>
+            <h2 class="title" id="lieuxTitle">Le décor, c'est le créateur qui le choisit. Et le décor joue avec toi.</h2>
+            <div class="args">
+                <article>
+                    <h3>La taverne</h3>
+                    <p>Une salle enfumée, des chopes et des dés qui flottent dans la brume. On y compte les sloubis&nbsp;: «&nbsp;sloubi&nbsp;1&nbsp;», puis «&nbsp;sloubi&nbsp;2&nbsp;»… jamais deux d'affilée par la même personne.</p>
+                </article>
+                <article>
+                    <h3>La forêt nourricière</h3>
+                    <p>Un sous-bois, des lucioles, des planches de culture en cercle. Chaque message est une graine. Un <code>#mot</code> fait pousser un microbiote, et chaque microbiote garde son encyclopédie&nbsp;: tout ce qui s'est dit sous ce mot.</p>
+                </article>
+                <article>
+                    <h3>Le moulin</h3>
+                    <p>La rivière, la roue, des barques de papier qui descendent le courant. Chaque message donne un tour de roue&nbsp;; tous les dix, la meule remplit un sac de farine.</p>
+                </article>
+                <article>
+                    <h3>Cyberpunk 1984</h3>
+                    <p>Un fanzine photocopié, cousin du punk&nbsp;: collages, néons, bandes VHS. Chaque message colle un de ses mots au mur, les pseudos deviennent des lettres anonymes, et un système bavard commente tout.</p>
+                </article>
+                <article>
+                    <h3>Kawaii</h3>
+                    <p>Un ciel pastel où tout a des yeux&nbsp;: les nuages, les mochis… et le bouton envoyer, qui suit ton curseur, lit ce que tu écris et sourit quand tu envoies. Tous les dix messages, un arc-en-ciel.</p>
+                </article>
+                <article>
+                    <h3>BD franco-belge</h3>
+                    <p>Une planche en ligne claire&nbsp;: les messages deviennent des bulles, le système des cartouches. Écris «&nbsp;BOUM&nbsp;» ou «&nbsp;PAF&nbsp;», l'onomatopée surgit&nbsp;; toutes les six cases, on tourne la page.</p>
+                </article>
+            </div>
+            <p class="aside">La forêt et le moulin suivent l'heure de chez toi&nbsp;: l'aube brumeuse, le plein jour, le couchant, la nuit.</p>
+        </section>
+
+        <section class="block" id="usages" aria-labelledby="usagesTitle">
+            <p class="kicker">Ce qu'on y fait</p>
+            <h2 class="title" id="usagesTitle">Une messagerie privée, en mieux.</h2>
+            <ul class="rows">
+                <li class="row">
+                    <div><p class="label">Écrire</p><h3>Claire comme une messagerie.</h3></div>
+                    <div>
+                        <p>Le fil dans un panneau bien visible, les bulles de chacun (les tiennes à droite), l'heure, les jours. Les liens sont cliquables et s'ouvrent dans un nouvel onglet ; un cœur sur n'importe quel message, d'un double-clic.</p>
+                        <p>On ne compte que des totaux&nbsp;: combien de clics sur un lien, combien de cœurs sur un message. Jamais qui. Sur téléphone, le clavier ne fait plus sauter l'écran.</p>
+                    </div>
+                </li>
+                <li class="row">
+                    <div><p class="label">Partager</p><h3>Envoie à l'arrache, c'est rangé.</h3></div>
+                    <div>
+                        <p>Glisse tes fichiers n'importe où sur la page, colle une capture, ou passe par le trombone&nbsp;: photos, vidéos et documents se rangent tout seuls d'après leur contenu, avec miniatures et visionneuse. Jusqu'à 10&nbsp;Go par salon.</p>
+                        <p>Une vidéo YouTube, Vimeo ou Dailymotion partagée en lien rejoint la vidéothèque avec sa miniature et son titre&nbsp;; les autres liens rejoignent les documents. Tout se retrouve.</p>
+                    </div>
+                </li>
+                <li class="row">
+                    <div><p class="label">Enregistrer</p><h3>Un message vocal, une vidéo, sur place.</h3></div>
+                    <div>
+                        <p>Le «&nbsp;+&nbsp;» à côté du trombone ouvre l'enregistreur&nbsp;: on parle ou on se filme, on réécoute, puis on envoie. Le navigateur compresse lui-même&nbsp;: une minute de voix pèse environ 240&nbsp;Ko.</p>
+                    </div>
+                </li>
+                <li class="row">
+                    <div><p class="label">Retrouver</p><h3>Tout est à une icône.</h3></div>
+                    <div>
+                        <p>Une barre d'icônes toujours là (à gauche en paysage, en haut en portrait)&nbsp;: Discussion, Favoris, Images, Vidéos, Documents, Post-it. Les favoris&nbsp;: les messages les plus aimés, ou seulement ceux où tu as mis un cœur.</p>
+                    </div>
+                </li>
+                <li class="row">
+                    <div><p class="label">Fonder</p><h3>Le créateur garde la clé.</h3></div>
+                    <div>
+                        <p>Qui fonde le salon reçoit une clé, gardée dans son navigateur, avec un lien pour la retrouver sur un autre appareil. D'un clic, il change le décor pour tout le monde, et il pose un mot de passe pour rester entre soi&nbsp;: c'est lui qui ouvre le partage de fichiers et les appels.</p>
+                    </div>
+                </li>
+                <li class="row">
+                    <div><p class="label">S'appeler</p><h3>Jusqu'à six, de navigateur à navigateur.</h3></div>
+                    <div>
+                        <p>Dans un salon à mot de passe, on s'appelle. Le son va directement d'un navigateur à l'autre, chiffré&nbsp;; le serveur ne fait que présenter les gens. On peut rejoindre sans micro, juste pour écouter.</p>
+                        <p>Quand un appel commence, ça sonne&nbsp;: une petite mélodie douce, tirée au hasard à chaque fois. La cloche prévient même onglet fermé.</p>
+                    </div>
+                </li>
+                <li class="row">
+                    <div><p class="label">Passer en live</p><h3>Un par un, en grand.</h3></div>
+                    <div>
+                        <p>Quand la scène est libre, quelqu'un montre sa caméra ou son écran, et les autres regardent. Un clic sur la pastille de quelqu'un lui passe le relais&nbsp;: il accepte, on descend de scène.</p>
+                    </div>
+                </li>
+            </ul>
+        </section>
+
+        <section class="block" id="nom" aria-labelledby="nomTitle">
+            <p class="kicker">Le nom</p>
+            <h2 class="title" id="nomTitle">Né d'un râle.</h2>
+            <div class="story">
+                <p>Facebook a supprimé sa discussion à plusieurs. Une chouette communauté y vivait&nbsp;; elle a disparu dans la foulée. Sloubi, c'est ce qu'on s'est construit à la place, pour ne plus dépendre de qui tire la prise.</p>
+                <p>Le nom est anecdotique&nbsp;: un clin d'œil à Perceval qui chante «&nbsp;Sloubi&nbsp;» dans <i>Kaamelott</i> (livre&nbsp;III). Le premier salon s'appelle d'ailleurs <a href="/chante">/chante</a>.</p>
+            </div>
+        </section>
+
+        <section class="block" id="libre" aria-labelledby="libreTitle">
+            <p class="kicker">Libre</p>
+            <div class="duo">
+                <div>
+                    <h2 class="title" id="libreTitle">Code ouvert, licence MIT.</h2>
+                    <p>Prends-le, change-le, héberge le tien. Un serveur en Go, une base SQLite, du JavaScript sans framework. Polices et bibliothèques hébergées ici&nbsp;: pas de CDN, pas de police Google, pas de traceur.</p>
+                </div>
+                <ul class="links">
+                    <li><a href="https://github.com/l3dlp/sloubi.chat">Le code <span>GitHub ↗</span></a></li>
+                    <li><a href="/_/">Tous les salons <span>/_/</span></a></li>
+                    <li><a href="/chante">Le salon historique <span>/chante</span></a></li>
+                </ul>
+            </div>
+        </section>
     </main>
+
+
+    <footer class="foot">
+        <span>SLOUBI.CHAT</span>
+        <span>Logiciel libre, licence MIT</span>
+    </footer>
 
     <script src="/assets/home.js" type="module"></script>
 </body>

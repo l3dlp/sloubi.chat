@@ -23,16 +23,31 @@ type client struct {
 	conn    *websocket.Conn
 	channel string
 	send    chan []byte
+
+	// appel (calls.go) : protégé par Hub.mu
+	pid    string // identifiant public dans l'appel, tiré au hasard à la connexion
+	nick   string
+	inCall bool
+	muted  bool
+	listen bool   // spectateur : sans micro
+	tag    string // identifiant de notifications du navigateur (push.go), annoncé par « hello »
+
+	// seau à jetons des messages entrants : seul readPump y touche
+	tokens float64
+	last   time.Time
 }
 
 // Hub : un ensemble de clients par salon.
 type Hub struct {
 	mu    sync.Mutex
 	rooms map[string]map[*client]struct{}
+	calls map[string]map[*client]struct{} // qui est dans l'appel de chaque salon
+	stage map[string]*client              // qui est en live dans chaque appel (une personne à la fois)
+	relay map[string]*client              // à qui la personne en live propose la scène (passage de relais)
 }
 
 func NewHub() *Hub {
-	return &Hub{rooms: make(map[string]map[*client]struct{})}
+	return &Hub{rooms: make(map[string]map[*client]struct{}), calls: make(map[string]map[*client]struct{}), stage: make(map[string]*client), relay: make(map[string]*client)}
 }
 
 // Événements WS. Les champs du message restent à plat (l'embed est aplati par
@@ -74,6 +89,9 @@ func (h *Hub) join(c *client, initial func() [][]byte) {
 		h.rooms[c.channel] = room
 	}
 	room[c] = struct{}{}
+	if len(h.calls[c.channel]) > 0 {
+		h.sendLocked(c, h.rosterJSONLocked(c.channel)) // qui est déjà dans l'appel
+	}
 }
 
 func (h *Hub) leave(c *client) {
@@ -91,6 +109,32 @@ func (h *Hub) dropLocked(c *client) {
 	close(c.send)
 	if len(room) == 0 {
 		delete(h.rooms, c.channel)
+	}
+	h.callLeaveLocked(c) // une connexion perdue quitte l'appel
+}
+
+// sendLocked n'attend jamais : buffer plein = client déconnecté.
+func (h *Hub) sendLocked(c *client, b []byte) {
+	select {
+	case c.send <- b:
+	default:
+		h.dropLocked(c)
+	}
+}
+
+// Evict envoie un dernier événement à tout le salon puis ferme ses connexions :
+// writePump vide le buffer avant de fermer, l'événement arrive donc bien.
+func (h *Hub) Evict(channel string, b []byte) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for c := range h.rooms[channel] {
+		if b != nil {
+			select {
+			case c.send <- b:
+			default:
+			}
+		}
+		h.dropLocked(c)
 	}
 }
 
@@ -136,21 +180,41 @@ func (c *client) writePump() {
 	}
 }
 
-// readPump ne sert qu'à détecter la fermeture et à recevoir les pongs :
-// le client n'a rien à envoyer par le WS.
-func (c *client) readPump(h *Hub) {
+// readPump détecte la fermeture, reçoit les pongs, et passe à onMessage ce que
+// le client envoie (seulement la signalisation des appels).
+func (c *client) readPump(h *Hub, onMessage func(*client, []byte)) {
 	defer func() {
 		h.leave(c)
 		_ = c.conn.Close()
 	}()
-	c.conn.SetReadLimit(512)
+	c.conn.SetReadLimit(maxSignalBytes)
 	_ = c.conn.SetReadDeadline(time.Now().Add(pongWait))
 	c.conn.SetPongHandler(func(string) error {
 		return c.conn.SetReadDeadline(time.Now().Add(pongWait))
 	})
 	for {
-		if _, _, err := c.conn.ReadMessage(); err != nil {
+		_, b, err := c.conn.ReadMessage()
+		if err != nil {
 			return
 		}
+		if onMessage != nil && c.allow() {
+			onMessage(c, b)
+		}
 	}
+}
+
+// allow : 20 messages par seconde, rafale de 60 (une négociation envoie une volée de candidats ICE).
+func (c *client) allow() bool {
+	now := time.Now()
+	if c.last.IsZero() {
+		c.tokens = 60
+	} else {
+		c.tokens = min(60, c.tokens+now.Sub(c.last).Seconds()*20)
+	}
+	c.last = now
+	if c.tokens < 1 {
+		return false
+	}
+	c.tokens--
+	return true
 }

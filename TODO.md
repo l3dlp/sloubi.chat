@@ -127,8 +127,39 @@ Créer des salons à volonté ouvre la porte au spam. Le minimum avant d’ouvri
 - [x] Audit du 01/11/2026 : timeouts HTTP (slowloris), clés de rate-limit IPv6 en /64, plafond de WS simultanés, plafond global de requêtes, texte libre sans caractères de direction ni zalgo, CSP sans style inline, HSTS/COOP/CORP/Permissions-Policy, Gin en mode release, checkpoint du WAL.
 - [ ] Installer `deploy/hardening.conf` sur le service systemd (aujourd'hui il tourne en root, score 9,6 UNSAFE ; validé à 1,2 sur une instance de test).
 
+## 5 bis. Lieux, créateur, mot de passe (14/11/2026)
+
+- [x] Trois lieux : taverne (sloubis), forêt nourricière (graines, microbiotes `#mot` et leur encyclopédie), moulin au bord de la rivière (tours de roue, sacs de farine). Chacun a sa scène 3D.
+- [x] Le fondateur d’un lieu reçoit une clé de créateur (gardée dans le navigateur, lien `#cle=` pour un autre appareil) et règle le thème et le mot de passe.
+- [x] Mot de passe : PBKDF2, cookie d’accès HMAC révoqué au changement, WS et API fermés sans lui, cadenas dans `/_/`.
+- [ ] Clé de créateur perdue (navigateur vidé, pas de lien copié) : aucun moyen de la retrouver. Prévoir une récupération, ou l’assumer.
+- [ ] Les lieux fondés avant le 14/11/2026 n’ont pas de créateur. Décider s’il faut un moyen de les réclamer.
+
+## 5 ter. Appels (19/11/2026)
+
+- [x] Appels audio de groupe dans les lieux gardés : 6 personnes, maillage WebRTC, signalisation par le WebSocket du salon, TURN de BeamCam.
+- [ ] Installer `deploy/turn.conf` (sinon STUN seul).
+- [x] Live un par un : la scène est à qui la prend quand elle est libre (caméra, ou écran sur ordinateur), les autres regardent. Place vidéo négociée d’avance + `replaceTrack` (BeamCam), débit plafonné selon le nombre de spectateurs.
+- [ ] Débit vraiment adaptatif (celui de BeamCam : `getStats()` toutes les 2 s, fenêtre de 3 min) au lieu des plafonds fixes.
+- [x] Rejoindre sans micro, en spectateur.
+- [x] Passer le relais : en live, un clic sur quelqu’un qui a un micro lui propose la scène ; il accepte en un clic.
+- [x] Sonnerie douce et aléatoire quand un appel commence, et notifications Web Push (cloche, lieu par lieu).
+- [x] Pseudo obligatoire avant d’écrire ou d’appeler.
+- [ ] Notifications sur iPhone : seulement pour le site installé sur l’écran d’accueil (règle d’Apple). Le manifeste démarre sur `/` : voir la question de la PWA par salon (section 4).
+- [ ] Une coupure du WebSocket raccroche l’appel. Garder les connexions WebRTC et renégocier à la reconnexion, si ça gêne.
+
+## 5 quater. Messagerie privée (20/11/2026)
+
+- [x] Liens cliquables (nouvel onglet), totaux de clics et de cœurs, rien d’autre.
+- [x] Fil dans un panneau, bulles, menu à gauche (Discussion, Favoris, Images, Vidéos, Documents).
+- [x] Fichiers dans les salons gardés : 10 Go par salon, classement automatique, miniatures, visionneuse.
+- [ ] **Disque** : le serveur n’a que 23 Go libres (94 % occupé). Deux salons pleins le rempliraient ; l’upload se ferme sous 5 Go libres. Agrandir le disque ou baisser le quota avant d’ouvrir largement.
+- [ ] Supprimer un fichier (le créateur ou l’auteur), et ce qui arrive aux fichiers d’un salon qui perd son mot de passe.
+- [ ] Les photos gardent leurs métadonnées EXIF (dont la position GPS). Les retirer à l’envoi, comme le font les messageries ?
+- [ ] Miniatures des vidéos (côté serveur, il faudrait ffmpeg) ; pour l’instant le navigateur montre la première image.
+
 ## 6. Repo / exploitation
 
-- [ ] Le binaire `sloubi` (≈ 35 Mo) est versionné. Le sortir de git (`.gitignore`) et le publier en release.
+- [x] Le binaire `sloubi` n’est plus versionné (`.gitignore`) : il est publié avec chaque release GitHub (v1.0.0 et suivantes), avec `forbidden.example.json`.
 - [ ] Ajouter le Dockerfile promis dans l’ancienne doc, ou acter qu’il n’y en aura pas.
 - [x] Tests : au minimum la règle de validation du sloubi (`insertMessage`), la regex des noms de salon, `forbidden.json` et l’isolation entre salons.

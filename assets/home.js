@@ -1,5 +1,6 @@
-/* home.js — accueil : on tape le nom de sa taverne, vert si c'est bon, rouge sinon.
-   Le serveur fait foi (/api/check) ; ici on ne fait que réagir vite. */
+/* home.js — l'accueil : on tape le nom d'un salon, on y entre. Le serveur fait
+   foi (/api/check) ; ici on réagit vite et on dit pourquoi un nom est refusé.
+   Un salon gardé demande son mot de passe ici même : on arrive déverrouillé. */
 
 'use strict';
 
@@ -8,11 +9,12 @@ const MAX_LEN = 32;
 
 const form = document.getElementById('prompt');
 const input = document.getElementById('chanInput');
-const mirror = document.getElementById('chanMirror');
-const cursor = document.getElementById('chanCursor');
 const hint = document.getElementById('chanHint');
-const line = form.querySelector('.prompt-line');
 const recentBox = document.getElementById('recent');
+const keyBox = document.getElementById('homeKey');
+const keyInput = document.getElementById('homePass');
+const keyName = document.getElementById('homeKeyName');
+const keyErr = document.getElementById('homeKeyErr');
 
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 const cache = new Map(); // nom → réponse de /api/check
@@ -20,72 +22,35 @@ let state = 'empty';
 let pending = null;      // AbortController de la requête en cours
 let debounce = null;
 
+const PLACES = { taverne: 'la taverne', foret: 'la forêt', moulin: 'le moulin', cyber: 'le mur cyberpunk', kawaii: 'le ciel kawaii', bd: 'la planche' };
 const HINTS = {
-  empty: 'Tape le nom de ta taverne',
+  empty: 'Lettres, chiffres, et un seul . _ - à la fois.',
   wait: '…',
-  checking: 'Le tavernier consulte ses registres…',
-  new: 'Entrée ↵ fonder la taverne',
-  exists: 'Entrée ↵ rejoindre la taverne',
-  start: 'GAME OVER · commence par une lettre ou un chiffre',
-  double: 'GAME OVER · un seul séparateur à la fois',
-  chars: 'GAME OVER · lettres, chiffres, . _ - seulement',
-  toolong: 'GAME OVER · 32 caractères maximum',
-  forbidden: 'GAME OVER · ce nom est réservé',
-  slow: 'Trop d’essais. Le tavernier fait une pause, reviens dans un moment.',
-  offline: 'Le tavernier ne répond pas. Réessaie.',
+  checking: 'On regarde si ce nom est pris…',
+  start: 'Commence par une lettre ou un chiffre.',
+  double: 'Un seul séparateur à la fois.',
+  chars: 'Lettres, chiffres, . _ - seulement.',
+  toolong: '32 caractères au plus.',
+  forbidden: 'Ce nom est réservé.',
+  slow: 'Trop d’essais d’un coup. Reprends dans un moment.',
+  offline: 'Le serveur ne répond pas. Réessaie.',
 };
 
-/* ========== Mesure : le champ suit la largeur du texte, et rétrécit pour tenir ========== */
-function fit() {
-  mirror.textContent = input.value || input.placeholder;
-  line.style.setProperty('--k', '1');
-  input.style.width = `${mirror.offsetWidth + 2}px`;
-  const avail = form.clientWidth;
-  const width = line.getBoundingClientRect().width;
-  const k = width > avail ? avail / width : 1;
-  line.style.setProperty('--k', k.toFixed(3));
-  input.style.width = `${mirror.offsetWidth + 2}px`;
-  // curseur bloc seulement quand le caret natif est en fin de saisie
-  const atEnd = input.selectionStart === input.value.length && input.selectionEnd === input.value.length;
-  line.classList.toggle('caret-native', !atEnd);
-}
-
-/* ========== États visuels ========== */
-function setState(next, hintKey) {
-  const prev = state;
+function setState(next, text) {
   state = next;
   document.body.dataset.state = next;
-  hint.textContent = HINTS[hintKey || next] || '';
-  fit();
-  if (next === 'ok' && prev !== 'ok') sparkle();
-  if (next === 'bad' && prev !== 'bad') shake();
+  hint.textContent = text ?? HINTS[next] ?? '';
 }
 
 function shake() {
   if (reducedMotion) return;
-  line.classList.remove('shake');
-  void line.offsetWidth; // relance l'animation
-  line.classList.add('shake');
-}
-
-function sparkle() {
-  if (reducedMotion) return;
-  const box = line.getBoundingClientRect();
-  for (let i = 0; i < 14; i++) {
-    const s = document.createElement('span');
-    s.className = 'spark';
-    s.style.left = `${box.left + Math.random() * box.width}px`;
-    s.style.top = `${box.top + box.height * (0.3 + Math.random() * 0.5)}px`;
-    s.style.setProperty('--dx', `${(Math.random() - 0.5) * 80}px`);
-    s.style.setProperty('--dy', `${-40 - Math.random() * 90}px`);
-    s.style.animationDelay = `${Math.random() * 0.25}s`;
-    document.body.appendChild(s);
-    s.addEventListener('animationend', () => s.remove());
-  }
+  form.classList.remove('shake');
+  void form.offsetWidth; // relance l'animation
+  form.classList.add('shake');
 }
 
 /* ========== Validation ========== */
-// règles locales : immédiates, mêmes que le serveur
+// règles locales : immédiates, les mêmes que le serveur
 function localVerdict(v) {
   if (!v) return { state: 'empty' };
   if (v.length > MAX_LEN) return { state: 'bad', hint: 'toolong' };
@@ -98,8 +63,14 @@ function localVerdict(v) {
 }
 
 function applyCheck(res) {
-  if (res.ok) setState('ok', res.exists ? 'exists' : 'new');
-  else setState('bad', res.reason === 'forbidden' ? 'forbidden' : res.reason === 'toolong' ? 'toolong' : 'chars');
+  if (!res.ok) {
+    setState('bad', HINTS[res.reason === 'forbidden' ? 'forbidden' : res.reason === 'toolong' ? 'toolong' : 'chars']);
+    return;
+  }
+  if (!res.exists) { setState('ok', 'Libre. Entrée ↵ pour le fonder.'); return; }
+  const place = PLACES[res.theme] || 'le salon';
+  setState('ok', res.locked && !res.access ? `Existe, gardé par un mot de passe. Entrée ↵ pour rejoindre ${place}.`
+    : `Existe. Entrée ↵ pour rejoindre ${place}.`);
 }
 
 async function remoteCheck(v) {
@@ -107,17 +78,20 @@ async function remoteCheck(v) {
   pending?.abort();
   pending = new AbortController();
   const mine = pending;
-  setState('wait', 'checking');
+  setState('wait', HINTS.checking);
+  let res;
   try {
     const r = await fetch(`/api/check/${encodeURIComponent(v)}`, { signal: mine.signal, cache: 'no-store' });
-    if (r.status === 429) { setState('wait', 'slow'); return; }
+    if (r.status === 429) { setState('wait', HINTS.slow); return; }
     if (!r.ok) throw new Error(String(r.status));
-    const res = await r.json();
-    cache.set(v, res);
-    if (input.value === v) applyCheck(res);
+    res = await r.json();
   } catch (e) {
-    if (e.name !== 'AbortError' && input.value === v) setState('wait', 'offline');
+    // seulement le réseau ou le serveur : une erreur d'affichage ne doit pas passer pour une panne
+    if (e.name !== 'AbortError' && input.value === v) setState('wait', HINTS.offline);
+    return;
   }
+  cache.set(v, res);
+  if (input.value === v) applyCheck(res);
 }
 
 function validate() {
@@ -125,18 +99,12 @@ function validate() {
   clearTimeout(debounce);
   pending?.abort();
   const verdict = localVerdict(v);
-  if (verdict.state === 'check') {
-    if (cache.has(v)) applyCheck(cache.get(v));
-    else {
-      setState('wait');
-      debounce = setTimeout(() => remoteCheck(v), 300);
-    }
-    return;
-  }
-  setState(verdict.state, verdict.hint);
+  if (verdict.state !== 'check') { setState(verdict.state, HINTS[verdict.hint || verdict.state]); return; }
+  if (cache.has(v)) { applyCheck(cache.get(v)); return; }
+  setState('wait');
+  debounce = setTimeout(() => remoteCheck(v), 300);
 }
 
-/* ========== Saisie ========== */
 input.addEventListener('input', () => {
   // minuscules, et on ignore tout ce qui n'est pas a-z 0-9 . _ -
   const cleaned = input.value.toLowerCase().replace(/[^a-z0-9._-]/g, '').slice(0, MAX_LEN);
@@ -144,30 +112,65 @@ input.addEventListener('input', () => {
     input.value = cleaned;
     input.setSelectionRange(cleaned.length, cleaned.length);
   }
+  closeKey(); // on change de salon : la serrure n'est plus la même
   validate();
 });
 
-['keyup', 'click', 'select', 'focus', 'blur'].forEach((ev) => input.addEventListener(ev, fit));
-document.addEventListener('selectionchange', () => { if (document.activeElement === input) fit(); });
-window.addEventListener('resize', fit);
-input.addEventListener('focus', () => line.classList.add('focused'));
-input.addEventListener('blur', () => line.classList.remove('focused'));
+/* ========== Entrer (et, pour un salon gardé, donner le mot de passe ici) ========== */
+function closeKey() {
+  keyBox.hidden = true;
+  keyInput.value = '';
+  keyErr.textContent = '';
+}
 
-form.addEventListener('submit', (e) => {
-  e.preventDefault();
-  if (state === 'ok') {
-    location.href = `/${input.value}`;
+async function enter(name) {
+  const res = cache.get(name);
+  if (!res || !res.locked || res.access) { location.href = `/${name}`; return; }
+  if (keyBox.hidden) {
+    keyName.textContent = name;
+    keyBox.hidden = false;
+    keyInput.focus();
     return;
   }
+  if (!keyInput.value) { keyInput.focus(); return; }
+  keyErr.textContent = '';
+  try {
+    const r = await fetch(`/api/${encodeURIComponent(name)}/unlock`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ password: keyInput.value }),
+    });
+    if (r.ok) { location.href = `/${name}`; return; }
+    keyErr.textContent = r.status === 429 ? 'Trop d’essais. Reviens dans un moment.' : 'Ce n’est pas le bon mot de passe.';
+  } catch {
+    keyErr.textContent = 'Le serveur ne répond pas. Réessaie.';
+  }
+  shake();
+  keyInput.select();
+}
+
+function go() {
+  if (state === 'ok') { enter(input.value); return; }
   if (state === 'wait' && localVerdict(input.value).state === 'check') {
     // Entrée avant la fin du debounce : on vérifie tout de suite
-    remoteCheck(input.value).then(() => { if (state === 'ok') location.href = `/${input.value}`; });
+    remoteCheck(input.value).then(() => { if (state === 'ok') enter(input.value); });
     return;
   }
   shake();
-});
+  input.focus();
+}
 
-/* ========== Tavernes récentes (posées par la page de salon) ========== */
+// deux champs, et la flèche : on gère Entrée nous-mêmes depuis l'un ou l'autre
+for (const el of [input, keyInput]) {
+  el.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || e.isComposing) return;
+    e.preventDefault();
+    go();
+  });
+}
+form.addEventListener('submit', (e) => { e.preventDefault(); go(); });
+
+/* ========== Tes salons (posés par la page de salon) ========== */
 (function showRecent() {
   let recent = [];
   try { recent = JSON.parse(localStorage.getItem('sloubi_recent') || '[]'); } catch {}
@@ -186,8 +189,5 @@ form.addEventListener('submit', (e) => {
 /* ========== Démarrage ========== */
 const prefill = (document.body.dataset.prefill || '').toLowerCase().slice(0, MAX_LEN);
 if (prefill) input.value = prefill; // nom refusé par le serveur : on le montre en rouge
-// les polices arrivent après le premier rendu (la pixel seulement au premier rouge) : on remesure
-document.fonts?.addEventListener?.('loadingdone', fit);
-['1em "Uncial Antiqua"', '1em "Press Start 2P"', '1em MedievalSharp'].forEach((f) => document.fonts?.load(f).then(fit, () => {}));
-input.focus();
+if (!matchMedia('(pointer: coarse)').matches) input.focus(); // sur mobile, pas de clavier qui surgit à l'arrivée
 validate();

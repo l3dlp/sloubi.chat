@@ -1,6 +1,7 @@
 package web
 
 import (
+	"fmt"
 	"log"
 	"mime"
 	"net"
@@ -40,7 +41,19 @@ type server struct {
 	checkLimit  *Limiter // /api/check : cible n°1 des bots
 	wsLimit     *Limiter
 	createLimit *Limiter // fondation de salons
+	lockLimit   *Limiter // mot de passe et réglages du créateur : PBKDF2 coûte cher, et on devine
 	anyLimit    *Limiter // toutes les requêtes : plafond large, contre les inondations
+	reactLimit  *Limiter // likes et clics de liens
+	uploadLimit *Limiter // envois de fichiers
+	uploads     reservations
+	videos      *videoFetcher // miniatures et titres des vidéos partagées en lien
+
+	turn turnConfig // coturn partagé avec BeamCam (calls.go)
+	push *pusher    // notifications d'appel (push.go) ; nil si désactivées
+
+	dirMu   sync.Mutex // cache de l'annuaire /_/
+	dirAt   time.Time
+	dirRows []directoryRow
 
 	wsMu     sync.Mutex
 	wsPerKey map[string]int // WS ouverts par IP (ou /64)
@@ -111,8 +124,15 @@ func Run(addr string) {
 		checkLimit:  NewLimiter(4, 10, 30, 10*time.Minute),
 		wsLimit:     NewLimiter(0.5, 10, 0, 0),
 		createLimit: NewLimiter(10.0/3600, 10, 0, 0),
+		lockLimit:   NewLimiter(0.2, 5, 10, 15*time.Minute),
 		anyLimit:    NewLimiter(30, 120, 0, 0),
+		reactLimit:  NewLimiter(3, 20, 0, 0),
+		uploadLimit: NewLimiter(2, 40, 0, 0),
+		turn:        loadTurn(),
 	}
+	s.push = newPusher(store)
+	s.videos = newVideoFetcher()
+	go store.reclassify() // les images rangées en documents par une version précédente retrouvent leur aperçu
 
 	// timeouts : sans eux, une connexion qui n'envoie jamais ses en-têtes reste ouverte (slowloris)
 	srv := &http.Server{
@@ -139,7 +159,9 @@ func (s *server) router() *gin.Engine {
 	if err := r.SetTrustedProxies([]string{"127.0.0.1", "::1"}); err != nil {
 		log.Fatal(err)
 	}
-	r.Use(gin.Logger(), gin.Recovery(), securityHeaders, s.floodGuard, gzip.Gzip(gzip.DefaultCompression, gzip.WithExcludedPaths([]string{"/ws"})))
+	r.Use(gin.Logger(), gin.Recovery(), securityHeaders, s.floodGuard, gzip.Gzip(gzip.DefaultCompression, gzip.WithExcludedPaths([]string{"/ws"}),
+		// les fichiers : déjà compressés, et leurs envois longs ont besoin de l'écrivain d'origine (délais prolongés)
+		gzip.WithExcludedPathsRegexs([]string{`^/api/[^/]+/files`})))
 
 	r.LoadHTMLGlob("views/*.html")
 
@@ -149,6 +171,21 @@ func (s *server) router() *gin.Engine {
 	r.POST("/api/:chan/messages", s.postMessage(s.paramChannel))
 	r.GET("/api/:chan/last-sloubi", s.lastSloubi(s.paramChannel))
 	r.POST("/api/:chan/postit", s.postPostit)
+	r.POST("/api/:chan/like", s.postLike)
+	r.POST("/api/:chan/click", s.postClick)
+	r.POST("/api/:chan/files", s.uploadFile)
+	r.GET("/api/:chan/files", s.listFilesRoute)
+	r.GET("/api/:chan/files/:id", s.serveFile)
+	r.GET("/api/:chan/favorites", s.favoritesRoute)
+	r.GET("/api/:chan/vthumb/:provider/:id", s.videoThumb)
+	r.GET("/api/:chan/info", s.info)
+	r.POST("/api/:chan/unlock", s.unlock)
+	r.POST("/api/:chan/settings", s.settings)
+	r.GET("/api/:chan/microbiotes", s.microbiotes)
+	r.GET("/api/:chan/microbiotes/:tag", s.microbiotes)
+	r.GET("/api/:chan/turn", s.turnCreds)
+	r.GET("/api/push-key", s.pushKey)
+	r.POST("/api/:chan/push", s.pushSubscribe)
 	r.GET("/ws/:chan", s.ws(s.paramChannel))
 
 	// Anciennes routes, gardées pour les PWA en cache : elles visent la taverne historique.
@@ -161,11 +198,17 @@ func (s *server) router() *gin.Engine {
 	for _, f := range []string{"app.js", "manifest.json", "icon-192.png", "icon-512.png"} {
 		r.StaticFile("/"+f, "./assets/"+f)
 	}
+	// le service worker des notifications : à la racine, pour couvrir tout le site
+	r.GET("/sw.js", func(c *gin.Context) {
+		c.Header("Cache-Control", "no-cache")
+		c.File("./assets/sw.js")
+	})
 
 	// Pages
 	r.GET("/", func(c *gin.Context) {
 		c.HTML(http.StatusOK, "home.html", gin.H{})
 	})
+	r.GET("/_/", s.directory) // aucun salon ne peut commencer par _ : pas de collision
 	r.GET("/:chan", s.channelPage)
 	r.NoRoute(func(c *gin.Context) {
 		if strings.HasPrefix(c.Request.URL.Path, "/api/") {
@@ -194,9 +237,11 @@ func securityHeaders(c *gin.Context) {
 	h.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 	h.Set("Cross-Origin-Opener-Policy", "same-origin")
 	h.Set("Cross-Origin-Resource-Policy", "same-origin")
-	h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), browsing-topics=()")
+	// micro, caméra et écran servent aux appels et au live des lieux gardés (calls.go)
+	h.Set("Permissions-Policy", "camera=(self), microphone=(self), display-capture=(self), geolocation=(), payment=(), usb=(), serial=(), browsing-topics=()")
 	// pas de style inline dans le HTML (les scripts passent par le CSSOM, que la CSP n'interdit pas)
-	h.Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; connect-src 'self'; img-src 'self' data:; "+
+	// media-src : les vidéos et les sons partagés (et blob: pour réécouter un enregistrement avant de l'envoyer)
+	h.Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; connect-src 'self'; img-src 'self' data:; media-src 'self' blob:; "+
 		"style-src 'self'; font-src 'self'; manifest-src 'self'; object-src 'none'; "+
 		"base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
 	c.Next()
@@ -218,6 +263,65 @@ func (s *server) paramChannel(c *gin.Context) (string, bool) {
 	return name, true
 }
 
+// Annuaire /_/ : tous les salons. Mis en cache quelques secondes, la requête parcourt
+// toute la table des messages.
+const directoryLimit = 2000
+
+type directoryRow struct {
+	ChannelInfo
+	Ago       string
+	ThemeName string
+}
+
+func (s *server) directory(c *gin.Context) {
+	s.dirMu.Lock()
+	if time.Since(s.dirAt) > 15*time.Second {
+		list, err := s.store.listChannels(directoryLimit)
+		if err != nil {
+			s.dirMu.Unlock()
+			log.Printf("directory: %v", err)
+			c.String(http.StatusInternalServerError, "db error")
+			return
+		}
+		rows := make([]directoryRow, len(list))
+		for i, ci := range list {
+			rows[i] = directoryRow{ci, ago(ci.LastActive), themeOf(ci.Theme).Name}
+		}
+		s.dirRows, s.dirAt = rows, time.Now()
+	}
+	rows := s.dirRows
+	s.dirMu.Unlock()
+
+	sloubis := 0
+	for _, r := range rows {
+		if !r.Locked {
+			sloubis += r.Sloubis
+		}
+	}
+	c.Header("X-Robots-Tag", "noindex, nofollow")
+	c.HTML(http.StatusOK, "directory.html", gin.H{"Rows": rows, "Count": len(rows), "Sloubis": sloubis})
+}
+
+// ago : « il y a 3 h » à partir d'un horodatage du serveur.
+func ago(ts string) string {
+	t, err := time.Parse(time.RFC3339, ts)
+	if err != nil {
+		return ""
+	}
+	switch d := time.Since(t); {
+	case d < time.Minute:
+		return "à l’instant"
+	case d < time.Hour:
+		return fmt.Sprintf("il y a %d min", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("il y a %d h", int(d.Hours()))
+	case d < 60*24*time.Hour:
+		return fmt.Sprintf("il y a %d j", int(d.Hours()/24))
+	default:
+		return t.Format("01/2006")
+	}
+}
+
 func (s *server) channelPage(c *gin.Context) {
 	raw := c.Param("chan")
 	name := strings.ToLower(raw)
@@ -233,7 +337,18 @@ func (s *server) channelPage(c *gin.Context) {
 		c.Redirect(http.StatusMovedPermanently, "/"+name)
 		return
 	}
-	c.HTML(http.StatusOK, "room.html", gin.H{"Chan": name})
+	r, err := s.store.room(name)
+	if err != nil {
+		c.String(http.StatusInternalServerError, "db error")
+		return
+	}
+	c.HTML(http.StatusOK, "room.html", gin.H{
+		"Chan":   name,
+		"Theme":  themeOf(r.Theme),
+		"Themes": themeList(),
+		"Locked": !s.hasAccess(c, name, r),
+		"Calls":  r.Locked() && s.hasAccess(c, name, r), // on s'appelle seulement entre gens qui ont le mot de passe
+	})
 }
 
 func (s *server) check(c *gin.Context) {
@@ -243,15 +358,17 @@ func (s *server) check(c *gin.Context) {
 	}
 	name := strings.ToLower(c.Param("chan"))
 	reason := s.forbidden.checkChannel(name)
-	exists := false
+	var r Room
 	if reason == "" {
 		var err error
-		if exists, err = s.store.channelExists(name); err != nil {
+		if r, err = s.store.room(name); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "db error"})
 			return
 		}
 	}
-	c.JSON(http.StatusOK, gin.H{"name": name, "ok": reason == "", "reason": reason, "exists": exists})
+	// access : l'accueil demande le mot de passe seulement à qui ne l'a pas encore donné
+	c.JSON(http.StatusOK, gin.H{"name": name, "ok": reason == "", "reason": reason, "exists": r.Exists,
+		"theme": themeOf(r.Theme).ID, "locked": r.Locked(), "access": reason == "" && s.hasAccess(c, name, r)})
 }
 
 // mayCreate consomme un jeton de fondation si le salon n'existe pas encore.
@@ -352,7 +469,8 @@ func (s *server) cleanNickname(raw string) (string, string) {
 	case l > maxNicknameLen:
 		return "", nickTooLong
 	}
-	if s.forbidden.Match(n) {
+	// « Anonyme » était le nom par défaut : il ne vaut pas un pseudo choisi
+	if s.forbidden.Match(n) || strings.EqualFold(n, "anonyme") {
 		return "", nickForbidden
 	}
 	return n, ""
@@ -373,6 +491,9 @@ func (s *server) postMessage(resolve channelResolver) gin.HandlerFunc {
 		if !ok {
 			return
 		}
+		if _, ok := s.enter(c, channel); !ok {
+			return
+		}
 		if !s.postLimit.Allow(clientKey(c)) {
 			c.JSON(http.StatusTooManyRequests, gin.H{"error": "slow down"})
 			return
@@ -390,12 +511,13 @@ func (s *server) postMessage(resolve channelResolver) gin.HandlerFunc {
 			ClientID: cleanClientID(in.ClientID),
 			Message:  cleanText(in.Message, false),
 		}
-		// un pseudo refusé (ou d'un vieux client) ne bloque pas le message : on passe en Anonyme
-		if nick, reason := s.cleanNickname(in.Nickname); reason == "" {
-			msg.Nickname = nick
-		} else {
-			msg.Nickname = "Anonyme"
+		// pas de pseudo valide, pas de message : on choisit son nom avant d'écrire
+		nick, reason := s.cleanNickname(in.Nickname)
+		if reason != "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "nickname required", "reason": reason})
+			return
 		}
+		msg.Nickname = nick
 		switch n := utf8.RuneCountInString(msg.Message); {
 		case n == 0:
 			c.JSON(http.StatusBadRequest, gin.H{"error": "empty message"})
@@ -408,14 +530,18 @@ func (s *server) postMessage(resolve channelResolver) gin.HandlerFunc {
 			return
 		}
 
-		msg, _, err := s.store.insertMessage(msg)
+		msg, created, err := s.store.insertMessage(msg)
 		if err != nil {
 			log.Printf("insert: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "db insert failed"})
 			return
 		}
 		s.hub.Broadcast(channel, messageJSON(msg))
-		c.JSON(http.StatusAccepted, gin.H{"status": "ok"})
+		out := gin.H{"status": "ok", "id": msg.ID} // l'auteur sait ainsi quelles bulles sont les siennes
+		if created {
+			out["ownerKey"] = s.founded(channel)
+		}
+		c.JSON(http.StatusAccepted, out)
 	}
 }
 
@@ -440,6 +566,9 @@ func (s *server) postPostit(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if _, ok := s.enter(c, channel); !ok {
+		return
+	}
 	if !s.postitLimit.Allow(clientKey(c)) {
 		c.JSON(http.StatusTooManyRequests, gin.H{"error": "slow down"})
 		return
@@ -459,13 +588,17 @@ func (s *server) postPostit(c *gin.Context) {
 	if !s.mayCreate(c, channel) {
 		return
 	}
-	p, _, err := s.store.setPostit(channel, text, cleanClientID(in.ClientID))
+	p, created, err := s.store.setPostit(channel, text, cleanClientID(in.ClientID))
 	if err != nil {
 		log.Printf("postit: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "db error"})
 		return
 	}
 	s.hub.Broadcast(channel, postitJSON(p))
+	if created {
+		c.JSON(http.StatusOK, gin.H{"channel": p.Channel, "text": p.Text, "updatedAt": p.UpdatedAt, "ownerKey": s.founded(channel)})
+		return
+	}
 	c.JSON(http.StatusOK, p)
 }
 
@@ -473,6 +606,9 @@ func (s *server) lastSloubi(resolve channelResolver) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		channel, ok := resolve(c)
 		if !ok {
+			return
+		}
+		if _, ok := s.enter(c, channel); !ok {
 			return
 		}
 		ls, err := s.store.lastSloubi(channel)
@@ -507,6 +643,9 @@ func (s *server) ws(resolve channelResolver) gin.HandlerFunc {
 			c.JSON(http.StatusTooManyRequests, gin.H{"error": "slow down"})
 			return
 		}
+		if _, ok := s.enter(c, channel); !ok {
+			return
+		}
 		if !s.wsAcquire(key) {
 			c.JSON(http.StatusTooManyRequests, gin.H{"error": "too many connections"})
 			return
@@ -516,7 +655,7 @@ func (s *server) ws(resolve channelResolver) gin.HandlerFunc {
 		if err != nil {
 			return
 		}
-		cl := &client{conn: conn, channel: channel, send: make(chan []byte, sendBuffer)}
+		cl := &client{conn: conn, channel: channel, send: make(chan []byte, sendBuffer), pid: newPeerID()}
 		go cl.writePump()
 		s.hub.join(cl, func() [][]byte {
 			var out [][]byte
@@ -530,6 +669,6 @@ func (s *server) ws(resolve channelResolver) gin.HandlerFunc {
 			}
 			return out
 		})
-		cl.readPump(s.hub)
+		cl.readPump(s.hub, s.onClientMessage)
 	}
 }

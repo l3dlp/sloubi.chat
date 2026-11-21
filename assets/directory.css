@@ -1,0 +1,251 @@
+/* directory.css — /_/ : le registre du tavernier, à la lueur des chandelles */
+
+:root {
+    --soot: #140b07;
+    --soot-2: #1d110a;
+    --parchment: #efe0c2;
+    --parchment-dim: rgba(239, 224, 194, 0.72);
+    --parchment-faint: rgba(239, 224, 194, 0.46);
+    --gold: #f2c46d;
+    --ember: #ff8a3d;
+    --hairline: rgba(242, 196, 109, 0.12);
+
+    --display: 'Uncial Antiqua', serif;
+    --text: 'Cormorant Garamond', 'Iowan Old Style', Georgia, serif;
+    --ease: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+    min-height: 100dvh;
+    font-family: var(--text);
+    font-size: 19px;
+    line-height: 1.5;
+    letter-spacing: -0.01em;
+    color: var(--parchment);
+    background:
+        radial-gradient(ellipse 70% 45% at 12% 100%, rgba(255, 110, 40, 0.2), transparent 70%),
+        radial-gradient(ellipse 50% 35% at 85% 0%, rgba(242, 196, 109, 0.08), transparent 70%),
+        linear-gradient(180deg, var(--soot-2), var(--soot));
+    background-color: var(--soot);
+    background-attachment: scroll;
+    -webkit-font-smoothing: antialiased;
+}
+
+/* une fumée immobile, peinte */
+.haze {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background:
+        radial-gradient(ellipse 40% 30% at 20% 70%, rgba(190, 120, 70, 0.08), transparent 70%),
+        radial-gradient(ellipse 35% 25% at 75% 40%, rgba(150, 130, 115, 0.06), transparent 70%),
+        radial-gradient(ellipse 120% 90% at 50% 50%, transparent 55%, rgba(8, 4, 2, 0.8) 100%);
+}
+
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+}
+
+.registry {
+    position: relative;
+    width: min(880px, calc(100vw - 32px));
+    margin: 0 auto;
+    padding: clamp(28px, 6vh, 72px) 0 48px;
+}
+
+/* ========== En-tête ========== */
+.registry-mark {
+    font-family: var(--display);
+    font-size: 1.05rem;
+    color: var(--gold);
+    text-decoration: none;
+    opacity: 0.85;
+}
+
+.registry-mark span { color: var(--parchment-faint); }
+.registry-mark:hover { opacity: 1; }
+
+.registry-title {
+    margin-top: clamp(20px, 5vh, 48px);
+    font-family: var(--display);
+    font-weight: normal;
+    font-size: clamp(3rem, 11vw, 7rem);
+    line-height: 0.95;
+    letter-spacing: -0.03em;
+    color: transparent;
+    background: linear-gradient(180deg, #fff1cf 0%, var(--gold) 50%, var(--ember) 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    filter: drop-shadow(0 0 30px rgba(255, 140, 60, 0.3));
+}
+
+.registry-stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 12px;
+    margin-top: 14px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.2em;
+    color: var(--parchment-faint);
+}
+
+.registry-stats strong { color: var(--parchment); font-weight: 600; font-variant-numeric: lining-nums; }
+
+/* ========== Le registre ========== */
+.registry-table {
+    width: 100%;
+    margin-top: clamp(28px, 6vh, 56px);
+    border-collapse: collapse;
+}
+
+.registry-table thead th {
+    padding: 0 12px 12px;
+    font-size: 0.68rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.22em;
+    text-align: left;
+    color: var(--parchment-faint);
+    border-bottom: 1px solid var(--hairline);
+}
+
+.registry-table tbody tr {
+    border-bottom: 1px solid var(--hairline);
+    transition: background-color 250ms var(--ease);
+}
+
+.registry-table tbody tr:hover { background: rgba(242, 196, 109, 0.04); }
+
+.registry-table th[scope="row"],
+.registry-table td {
+    padding: 14px 12px;
+    vertical-align: baseline;
+}
+
+.registry-table th[scope="row"] { text-align: left; font-weight: normal; }
+
+.num { text-align: right; font-variant-numeric: lining-nums tabular-nums; }
+.registry-table thead .num { text-align: right; }
+
+.when {
+    text-align: right;
+    font-style: italic;
+    color: var(--parchment-dim);
+    white-space: nowrap;
+}
+
+.registry-table thead .when { text-align: right; font-style: normal; }
+
+.chan {
+    font-family: var(--display);
+    font-size: clamp(1.1rem, 2.6vw, 1.35rem);
+    color: var(--parchment);
+    text-decoration: none;
+    overflow-wrap: anywhere;
+    transition: color 250ms var(--ease), text-shadow 250ms var(--ease);
+}
+
+.kind {
+    margin-left: 8px;
+    padding: 0 8px;
+    border-radius: 999px;
+    border: 1px solid var(--hairline);
+    font-size: 0.72rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--parchment-faint);
+    vertical-align: middle;
+}
+
+.kind.locked { border: none; padding: 0; text-transform: none; }
+
+.chan:hover,
+.chan:focus-visible {
+    color: var(--gold);
+    text-shadow: 0 0 18px rgba(242, 196, 109, 0.45);
+}
+
+.sloubis { color: var(--parchment-faint); }
+
+.sloubis.lit {
+    font-family: var(--display);
+    font-size: 1.15rem;
+    color: var(--gold);
+    text-shadow: 0 0 14px rgba(255, 140, 60, 0.45);
+}
+
+.label { display: none; }
+
+.registry-empty {
+    margin-top: 48px;
+    font-style: italic;
+    color: var(--parchment-dim);
+}
+
+.registry-empty a,
+.registry-foot a { color: var(--gold); }
+
+.registry-foot {
+    margin-top: 40px;
+    font-size: 1rem;
+}
+
+.registry-foot a { text-decoration: none; opacity: 0.8; }
+.registry-foot a:hover { opacity: 1; }
+
+:focus-visible { outline: 1.5px solid var(--gold); outline-offset: 3px; }
+
+/* ========== Mobile : une fiche par taverne ========== */
+@media (max-width: 600px) {
+    .registry-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+
+    .registry-table tbody tr {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        grid-template-areas: "chan when" "sloubis messages";
+        gap: 2px 12px;
+        padding: 14px 4px;
+    }
+
+    .registry-table th[scope="row"],
+    .registry-table td { padding: 0; }
+
+    .registry-table th[scope="row"] { grid-area: chan; }
+    .registry-table td:nth-of-type(1) { grid-area: sloubis; text-align: left; }
+    .registry-table td:nth-of-type(2) { grid-area: messages; }
+    .registry-table td.when { grid-area: when; font-size: 0.9rem; }
+
+    .label {
+        display: inline;
+        margin-right: 6px;
+        font-size: 0.66rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.18em;
+        color: var(--parchment-faint);
+        font-family: var(--text);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .registry-table tbody tr, .chan { transition: none; }
+}
+
+/* la barre de défilement : dorée, comme le registre */
+html::-webkit-scrollbar { width: 12px; }
+html::-webkit-scrollbar-track { background: var(--soot); }
+html::-webkit-scrollbar-thumb { border: 3px solid var(--soot); border-radius: 999px; background: rgba(242, 196, 109, 0.35); }
+html::-webkit-scrollbar-thumb:hover { background: rgba(242, 196, 109, 0.7); }
+
+@supports (-moz-appearance: none) {
+    html { scrollbar-width: thin; scrollbar-color: rgba(242, 196, 109, 0.4) var(--soot); }
+}
