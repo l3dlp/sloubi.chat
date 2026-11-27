@@ -5,3 +5,6 @@ sloubi.new
 # le binaire se construit (bin/build.sh) ou se télécharge depuis les releases GitHub
 /sloubi
 /dist/
+
+# configuration locale (secrets) : voir .env.example
+.env

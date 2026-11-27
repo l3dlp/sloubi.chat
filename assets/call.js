@@ -12,6 +12,7 @@
 'use strict';
 
 import { ring, stop as stopRing, unlock as unlockAudio } from '/assets/ring.js';
+import { Camera, mountControls } from '/assets/camfx.js';
 
 const CHAN = document.body.dataset.chan;
 const API = `/api/${encodeURIComponent(CHAN)}`;
@@ -30,9 +31,8 @@ const liveLabel = document.getElementById('callLiveLabel');
 const liveMenu = document.getElementById('liveMenu');
 const liveScreen = document.getElementById('liveScreen');
 const stageEl = document.getElementById('stage');
-const stageVideo = document.getElementById('stageVideo');
+const stageTiles = document.getElementById('stageTiles');
 const stageWho = document.getElementById('stageWho');
-const stageWait = document.getElementById('stageWait');
 const stageFull = document.getElementById('stageFull');
 const watchBtn = document.getElementById('callWatch');
 const bellBtn = document.getElementById('callBell');
@@ -46,7 +46,8 @@ let local = null;        // notre micro
 let iceServers = [];
 let muted = false;
 let roster = [];         // qui est dans l'appel, vu par le serveur : [{id, nick, muted}]
-let liveId = '';         // qui est sur scène (le serveur arbitre)
+const MAX_LIVE = 2;      // un duo au plus sur scène (calls.go : maxLive)
+let lives = [];          // qui est sur scène, dans l'ordre (le serveur arbitre)
 let myLive = null;       // notre live : { track, kind: 'camera' | 'screen' }
 let pendingLive = null;  // notre live, en attendant que le serveur nous donne la scène
 let listening = false;   // spectateur : on rejoint sans micro
@@ -101,17 +102,18 @@ function render() {
     : roster.length >= MAX ? 'Appel complet'
     : roster.length ? `Rejoindre l'appel (${roster.length}/${MAX})` : 'Lancer l\'appel';
   liveBtn.hidden = !inCall || listening; // un spectateur suit, il ne monte pas sur scène
-  const onStage = roster.find((p) => p.id === liveId);
-  liveBtn.disabled = !!pendingLive || (!!liveId && liveId !== me && !relayFrom);
+  const onStage = lives.map((id) => roster.find((p) => p.id === id)?.nick).filter(Boolean);
+  liveBtn.disabled = !!pendingLive || (stageIsFull() && !relayFrom);
   liveBtn.classList.toggle('is-live', !!myLive);
   liveLabel.textContent = myLive ? 'Arrêter le live' : pendingLive ? 'On monte…'
-    : onStage ? `${onStage.nick} est en live` : 'Passer en live';
+    : stageIsFull() ? `${onStage.join(' et ')} sont en live`
+    : onStage.length ? `Rejoindre ${onStage[0]} en live` : 'Passer en live';
   if (liveBtn.hidden || liveBtn.disabled) closeLiveMenu();
   muteBtn.setAttribute('aria-pressed', String(muted));
   muteBtn.setAttribute('aria-label', muted ? 'Rallumer le micro' : 'Couper le micro');
 
   // on ne reconstruit les pastilles que si elles changent : sinon un clic tombe sur un élément remplacé
-  const sig = JSON.stringify([roster, me, liveId, relayTo, !!myLive, [...peers].map(([id, x]) => [id, x.pc.connectionState])]);
+  const sig = JSON.stringify([roster, me, lives, relayTo, !!myLive, [...peers].map(([id, x]) => [id, x.pc.connectionState])]);
   if (sig !== lastPeopleSig) {
     lastPeopleSig = sig;
     renderPeople();
@@ -127,11 +129,11 @@ function renderPeople() {
     li.dataset.id = p.id;
     li.classList.toggle('muted', !!p.muted);
     li.classList.toggle('is-me', p.id === me);
-    li.classList.toggle('on-stage', p.id === liveId);
+    li.classList.toggle('on-stage', lives.includes(p.id));
     li.classList.toggle('listen', !!p.listen);
     li.classList.toggle('relay-pending', p.id === relayTo);
-    // en live, un clic sur quelqu'un qui a un micro lui passe la scène
-    if (myLive && p.id !== me && !p.listen) {
+    // en live, un clic sur quelqu'un qui a un micro (et n'est pas déjà en live) lui passe sa place
+    if (myLive && p.id !== me && !p.listen && !lives.includes(p.id)) {
       li.classList.add('can-relay');
       li.tabIndex = 0;
       li.setAttribute('role', 'button');
@@ -164,14 +166,34 @@ peopleEl.addEventListener('keydown', (e) => {
   if (p) { e.preventDefault(); handoff(p); }
 });
 
+// la scène est pleine pour nous : deux personnes en live, et nous n'en sommes pas
+function stageIsFull() { return lives.length >= MAX_LIVE && !lives.includes(me); }
+
 /* ========== Une connexion par personne ========== */
 function signal(to, data) { send({ op: 'signal', to, data }); }
+
+// le live et le son de l'appel ne se mettent jamais en pause : ni par le lecteur plein écran
+// d'iOS, ni par les touches multimédia, ni par un navigateur qui économise une vidéo hors écran
+function unpausable(el) {
+  el.disablePictureInPicture = true;
+  el.disableRemotePlayback = true;
+  el.addEventListener('pause', () => { if (el.srcObject && el.isConnected) el.play().catch(() => {}); });
+}
+function holdMediaSession(on) {
+  const ms = navigator.mediaSession;
+  if (!ms?.setActionHandler) return;
+  for (const a of ['pause', 'stop']) {
+    try { ms.setActionHandler(a, on ? () => {} : null); } catch { /* action inconnue de ce navigateur */ }
+  }
+  if (on) ms.playbackState = 'playing';
+}
 
 function createPeer(id, offerer) {
   const pc = new RTCPeerConnection({ iceServers, iceTransportPolicy: 'all' });
   const audio = document.createElement('audio');
   audio.autoplay = true;
   audio.playsInline = true;
+  unpausable(audio);
   audioBox.appendChild(audio);
   const peer = { pc, audio, offerer, pending: [] };
   peers.set(id, peer);
@@ -261,10 +283,11 @@ function tune(peer) {
   const sender = peer.video?.sender;
   if (!sender || !myLive) return;
   const n = Math.max(1, peers.size);
+  const duo = lives.length > 1 ? 0.75 : 1; // en duo, chacun reçoit deux vidéos : on allège un peu
   const p = sender.getParameters();
   if (!p.encodings || !p.encodings.length) return; // pas encore négocié : on réessaiera une fois connecté
   const screen = myLive.kind === 'screen';
-  p.encodings[0].maxBitrate = screen ? (n <= 2 ? 1_500_000 : 900_000) : (n <= 2 ? 1_200_000 : n <= 3 ? 850_000 : 600_000);
+  p.encodings[0].maxBitrate = Math.round(duo * (screen ? (n <= 2 ? 1_500_000 : 900_000) : (n <= 2 ? 1_200_000 : n <= 3 ? 850_000 : 600_000)));
   // un écran garde sa résolution (le texte reste lisible), une caméra peut la réduire
   p.encodings[0].scaleResolutionDownBy = screen ? 1 : (n <= 3 ? 1 : 1.5);
   p.degradationPreference = screen ? 'maintain-resolution' : 'balanced';
@@ -279,22 +302,37 @@ function sendLive(peer) {
 
 async function goLive(kind) {
   closeLiveMenu();
-  if (state !== 'in' || listening || myLive || pendingLive || (liveId && liveId !== me && !relayFrom)) return;
+  if (state !== 'in' || listening || myLive || pendingLive || (stageIsFull() && !relayFrom)) return;
   hideRelay();
-  let track;
+  let track, cam = null;
   try {
-    const stream = kind === 'screen'
-      ? await navigator.mediaDevices.getDisplayMedia({ video: { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 15, max: 30 } }, audio: false })
-      : await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 }, facingMode: 'user' }, audio: false });
-    track = stream.getVideoTracks()[0];
+    if (kind === 'screen') {
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 15, max: 30 } }, audio: false });
+      track = stream.getVideoTracks()[0];
+      track.contentHint = 'detail';
+    } else {
+      // la caméra (camfx.js) : on peut en changer et régler son image ; la piste envoyée peut alors changer
+      cam = new Camera({
+        constraints: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
+        onTrack: (t) => {
+          const l = myLive?.cam === cam ? myLive : pendingLive?.cam === cam ? pendingLive : null;
+          if (!l) return;
+          l.track = t;
+          if (l === myLive) for (const peer of peers.values()) sendLive(peer);
+          updateStage();
+        },
+        onEnded: () => { if (myLive?.cam === cam || pendingLive?.cam === cam) stopLive(); }, // caméra débranchée
+      });
+      track = await cam.open();
+    }
   } catch (e) {
+    cam?.stop();
     say(e && e.name === 'NotAllowedError' ? (kind === 'screen' ? 'Partage d’écran annulé.' : 'La caméra a été refusée.') : 'Impossible d’ouvrir la vidéo.');
     return;
   }
-  track.contentHint = kind === 'screen' ? 'detail' : 'motion';
-  // le bouton « Arrêter le partage » du navigateur, ou une caméra débranchée
-  track.addEventListener('ended', () => { if (myLive?.track === track || pendingLive?.track === track) stopLive(); });
-  pendingLive = { track, kind };
+  // le bouton « Arrêter le partage » du navigateur
+  if (!cam) track.addEventListener('ended', () => { if (myLive?.track === track || pendingLive?.track === track) stopLive(); });
+  pendingLive = { track, kind, cam };
   relayFrom = '';
   send({ op: 'live', on: true });
   render();
@@ -310,9 +348,9 @@ function startLive() {
 
 function dropLive() {
   relayTo = '';
-  const t = (myLive || pendingLive)?.track;
+  const l = myLive || pendingLive;
   myLive = pendingLive = null;
-  t?.stop();
+  if (l?.cam) l.cam.stop(); else l?.track?.stop();
   for (const peer of peers.values()) sendLive(peer);
 }
 
@@ -324,34 +362,89 @@ function stopLive() {
   render();
 }
 
-function updateStage() {
-  const show = state === 'in' && !!liveId;
-  stageEl.hidden = !show;
-  document.body.classList.toggle('on-stage', show);
-  if (!show) { stageVideo.srcObject = null; return; }
-  const who = roster.find((p) => p.id === liveId);
-  let track = null;
-  if (liveId === me) {
-    track = myLive?.track || null;
-    stageWho.textContent = myLive?.kind === 'screen' ? 'Tu partages ton écran' : 'Tu es en live';
-  } else {
-    track = peers.get(liveId)?.videoTrack || null;
-    stageWho.textContent = `${who?.nick || '…'} en live`;
-  }
-  stageEl.classList.toggle('mirror', liveId === me && myLive?.kind === 'camera'); // son propre visage, comme dans un miroir
-  if (track && stageVideo.srcObject?.getVideoTracks()[0] !== track) {
-    stageVideo.srcObject = new MediaStream([track]);
-    stageVideo.play().catch(() => {});
-  }
-  stageWait.hidden = !!track && !track.muted;
+// une vignette par personne en live (deux au plus), côte à côte, ou l'une sur l'autre en portrait
+const tiles = new Map(); // id → { el, video, name, wait }
+function tileFor(id) {
+  let t = tiles.get(id);
+  if (t) return t;
+  const el = document.createElement('div');
+  el.className = 'stage-tile';
+  const video = document.createElement('video');
+  video.className = 'stage-video';
+  video.playsInline = true;
+  video.autoplay = true;
+  video.muted = true; // le son passe par l'audio de l'appel
+  unpausable(video);
+  const name = document.createElement('span');
+  name.className = 'stage-name';
+  const wait = document.createElement('p');
+  wait.className = 'stage-wait';
+  wait.textContent = 'L’image arrive…';
+  el.append(video, name, wait);
+  video.addEventListener('playing', () => { wait.hidden = true; });
+  video.addEventListener('dblclick', () => toggleFull(video));
+  // iPhone : pas de plein écran pour la scène entière, mais une vidéo touchée passe en plein écran natif
+  video.addEventListener('click', () => { if (!canFullStage) toggleFull(video); });
+  video.addEventListener('webkitendfullscreen', () => video.play().catch(() => {})); // iOS met en pause en sortant
+  t = { el, video, name, wait };
+  tiles.set(id, t);
+  return t;
 }
 
-stageVideo.addEventListener('playing', () => { stageWait.hidden = true; });
-stageVideo.addEventListener('dblclick', () => toggleFull());
+function updateStage() {
+  const show = state === 'in' && lives.length > 0;
+  stageEl.hidden = !show;
+  document.body.classList.toggle('on-stage', show);
+  stageEl.classList.toggle('duo', show && lives.length > 1);
+  for (const [id, t] of tiles) if (!show || !lives.includes(id)) { t.video.srcObject = null; t.el.remove(); tiles.delete(id); }
+  if (!show) return;
+  const names = [];
+  lives.forEach((id, i) => {
+    const t = tileFor(id);
+    if (stageTiles.children[i] !== t.el) stageTiles.insertBefore(t.el, stageTiles.children[i] || null);
+    let track = null;
+    if (id === me) {
+      track = myLive?.track || null;
+      t.name.textContent = myLive?.kind === 'screen' ? 'Ton écran' : 'Toi';
+    } else {
+      track = peers.get(id)?.videoTrack || null;
+      t.name.textContent = roster.find((p) => p.id === id)?.nick || '…';
+    }
+    names.push(id === me ? 'toi' : t.name.textContent);
+    t.el.classList.toggle('mirror', id === me && !!myLive?.cam?.mirror); // son propre visage (caméra de face), comme dans un miroir
+    // sur sa propre vignette : changer de caméra, régler son image (camfx.js)
+    const cam = id === me ? myLive?.cam : null;
+    if (t.tools && t.tools.cam !== cam) { t.tools.remove(); t.tools = null; }
+    if (cam && !t.tools) t.tools = Object.assign(mountControls(t.el, cam, { onSwitch: updateStage }), { cam });
+    if (track && t.video.srcObject?.getVideoTracks()[0] !== track) {
+      t.video.srcObject = new MediaStream([track]);
+      t.video.play().catch(() => {});
+    }
+    t.wait.hidden = !!track && !track.muted;
+  });
+  stageWho.textContent = lives.length > 1 ? `En live : ${names.join(' et ')}`
+    : lives[0] === me ? (myLive?.kind === 'screen' ? 'Tu partages ton écran' : 'Tu es en live') : `${names[0]} en live`;
+}
+
 stageFull.addEventListener('click', () => toggleFull());
-function toggleFull() {
-  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
-  else (stageEl.requestFullscreen || stageEl.webkitRequestFullscreen)?.call(stageEl);
+// plein écran : toute la scène là où c'est possible (ordinateur, Android, iPad) ; sur iPhone, Safari
+// ne sait mettre en plein écran qu'une vidéo (webkitEnterFullscreen) : celle qu'on touche, sinon
+// celle de la première personne en live qui n'est pas nous
+const canFullStage = !!(stageEl.requestFullscreen || stageEl.webkitRequestFullscreen);
+function toggleFull(video) {
+  if (document.fullscreenElement || document.webkitFullscreenElement) {
+    (document.exitFullscreen || document.webkitExitFullscreen)?.call(document)?.catch?.(() => {});
+    return;
+  }
+  if (canFullStage) {
+    const r = (stageEl.requestFullscreen || stageEl.webkitRequestFullscreen).call(stageEl);
+    r?.catch?.(() => {});
+    return;
+  }
+  const v = video || [...tiles.entries()].sort(([a], [b]) => (a === me) - (b === me)).map(([, t]) => t.video)[0];
+  if (v?.webkitEnterFullscreen && v.readyState >= 1) {
+    try { v.webkitEnterFullscreen(); } catch { /* pas encore d'image */ }
+  }
 }
 
 function closeLiveMenu() {
@@ -412,8 +505,9 @@ async function join(listen = false) {
 }
 
 function cleanup() {
+  holdMediaSession(false);
   dropLive();
-  liveId = '';
+  lives = [];
   for (const id of [...peers.keys()]) closePeer(id);
   local?.getTracks().forEach((t) => t.stop());
   local = null;
@@ -457,6 +551,7 @@ window.addEventListener('sloubi:call', (e) => {
       if (state !== 'joining') { send({ op: 'leave' }); return; } // on a renoncé entre-temps
       me = m.you;
       state = 'in';
+      holdMediaSession(true);
       meter(me, local);
       startMeters();
       for (const p of m.peers || []) createPeer(p.id, true);
@@ -485,7 +580,7 @@ window.addEventListener('sloubi:call', (e) => {
       break;
     case 'stage-busy':
       dropLive();
-      say('Quelqu’un est déjà en live. Attends qu’il ou elle rende la scène.');
+      say('Deux personnes sont déjà en live. Attends qu’une place se libère.');
       render();
       break;
     case 'signal':
@@ -494,14 +589,14 @@ window.addEventListener('sloubi:call', (e) => {
     case 'roster':
       const wasEmpty = roster.length === 0;
       roster = (m.peers || []).slice(0, MAX);
-      liveId = m.live || '';
+      lives = Array.isArray(m.lives) ? m.lives.slice(0, MAX_LIVE) : m.live ? [m.live] : [];
       if (wasEmpty && roster.length && state === 'idle' && Date.now() - wsOpenAt > 2500) incoming(roster[0].nick);
       if (!roster.length) stopRinging();
-      if (relayFrom && liveId !== relayFrom) hideRelay(); // l'offre ne tient plus
+      if (relayFrom && !lives.includes(relayFrom)) hideRelay(); // l'offre ne tient plus
       // quelqu'un est parti : on ferme sa connexion
       for (const id of [...peers.keys()]) if (!roster.some((p) => p.id === id)) closePeer(id);
-      if (pendingLive && liveId === me) startLive();
-      else if (myLive && liveId !== me) dropLive(); // on nous a retiré la scène
+      if (pendingLive && lives.includes(me)) startLive();
+      else if (myLive && !lives.includes(me)) dropLive(); // on nous a pris notre place (relais accepté)
       if (myLive) tuneAll(); // le nombre de spectateurs a pu changer
       if (state === 'in' && roster.length > 1 && !pendingLive) say('');
       updateStage();

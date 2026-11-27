@@ -372,10 +372,15 @@ box.addEventListener('touchend', (e) => {
   touchX = null;
 });
 
-// une image cliquée dans le fil : on l'ouvre seule
+// une vignette cliquée dans le fil (ou dans les favoris) : la visionneuse parcourt ensuite
+// toutes les vignettes de cet endroit, dans l'ordre, aux flèches ou du doigt
 window.addEventListener('sloubi:view', (e) => {
-  gallery = [e.detail];
-  openViewer(0);
+  const d = e.detail || {};
+  const f = d.file || d;
+  const scope = d.from?.closest('#chatMessages, #libraryBody');
+  const all = scope ? [...scope.querySelectorAll('.file-thumb')].map((el) => F.fileOf(el)).filter(Boolean) : [];
+  gallery = all.length ? all : [f];
+  openViewer(Math.max(0, gallery.findIndex((x) => x.id === f.id)));
 });
 
 /* ========== Les envois (lieu gardé seulement) ========== */
@@ -485,7 +490,7 @@ if (fileInput && trayEl) {
           row.classList.add('failed');
           st.textContent = {
             403: 'refusé : il faut le mot de passe du salon',
-            413: 'refusé : l’espace du salon (10 Go) est plein',
+            413: 'refusé : l’espace du salon est plein',
             507: 'refusé : le serveur n’a plus de place',
             429: 'trop d’envois d’un coup, réessaie',
             400: 'envoi incomplet',

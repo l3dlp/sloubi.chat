@@ -13,8 +13,8 @@ self.addEventListener('push', (e) => {
     body: d.body || 'Quelqu’un t’appelle.',
     tag: d.tag || 'sloubi-call',   // un nouvel appel du même salon remplace l'ancien
     renotify: true,
-    icon: '/assets/icon-192.png',
-    badge: '/assets/icon-192.png',
+    icon: '/icon-192.png', // sur un domaine perso : l'initiale du lieu (icons.go)
+    badge: '/icon-192.png',
     data: { url },
   }));
 });

@@ -27,12 +27,14 @@ Ici, pas d’algos, pas de pub, pas de flicage. Juste un compteur communautaire 
 - **La forêt et le moulin suivent l’heure du visiteur** : aube brumeuse, plein jour, couchant, puis la nuit, ses étoiles, les fenêtres du meunier et les lucioles. `?heure=14` dans l’URL force une heure, pour essayer.  
 - **Le créateur d’un lieu** est celui qui le fonde (premier message, premier post-it, ou les paramètres d’un lieu encore vide). Il reçoit une clé secrète gardée dans son navigateur, et peut copier un **lien de créateur** (`/<chan>#cle=…`) pour régler son lieu depuis un autre appareil. Les lieux fondés avant cette fonction, `/chante` compris, n’ont pas de créateur.  
 - **Mot de passe** (optionnel, posé par le créateur) : sans lui, on voit la porte et le décor, rien d’autre. Changer le mot de passe met tout le monde dehors ; le retirer rouvre le lieu.  
+- **Domaine perso** : un lieu peut s’ouvrir sur son propre nom de domaine. Le créateur (membre validé ou admin) l’écrit dans les options du lieu ; le domaine doit pointer sur le serveur. Sur ce domaine, `/` est le lieu ; l’API, le WebSocket et les fichiers statiques passent ; `/<lieu>` ramène à `/` ; tout autre chemin repart vers `https://sloubi.chat`. Un domaine qui n’est rattaché à aucun lieu renvoie vers `https://sloubi.chat`. Le proxy peut demander `GET /_/domaine?domain=…` (en local seulement) avant de prendre un certificat : 200 pour un domaine rattaché, 404 sinon.  
+- **Mot de passe réservé aux membres** : discuter ne demande aucun compte, mais garder un lieu (et donc ses fichiers, ses vocaux, ses appels) est réservé à l’admin et aux membres validés. On se connecte par un **code reçu par e-mail** (comme sur Daily Jungle : rien à retenir), sur [`/_/compte`](https://sloubi.chat/_/compte) ou directement dans les options du lieu. Le premier mot de passe posé est une **demande** : son hachage attend, le lieu reste ouvert, et il s’active tout seul quand l’admin valide le membre. L’admin ne voit jamais les mots de passe. L’admin est unique (`ADMIN_EMAIL`) et devient, à sa création, propriétaire de tous les lieux existants.  
 - **Appels de groupe dans les lieux gardés** : celles et ceux qui ont le mot de passe peuvent s’appeler, jusqu’à 6 à la fois. Bouton « Lancer l’appel » au-dessus de la saisie ; chacun voit qui est en ligne, qui parle (la pastille s’allume) et qui a coupé son micro. **On peut rejoindre sans micro**, en simple spectateur. **Quand quelqu’un lance l’appel, ça sonne** chez les présents : une petite mélodie douce, tirée au hasard à chaque appel (une patch de synthé modulaire générée en direct). La cloche 🔔 abonne aux **notifications** (Web Push) : on est prévenu même onglet fermé (sur iPhone, seulement si le site est installé sur l’écran d’accueil). **Live, un par un** : quand la scène est libre, quelqu’un de l’appel passe en live avec sa caméra (ou son écran, sur ordinateur) et les autres le regardent en grand ; quand il ou elle rend la scène, la suivante peut la prendre. En live, un clic sur la pastille de quelqu’un qui a un micro **lui passe le relais** : il accepte en un clic (caméra ou écran), et l’on descend de scène. Le son va directement de navigateur à navigateur (WebRTC, maillage) ; le serveur ne fait que relayer la mise en relation par le WebSocket du salon, donc l’appel est exactement aussi privé que le lieu. Relais TURN : le coturn de [BeamCam](https://beamcam.live), dont Sloubi reprend aussi les réglages audio et la relance ICE (MIT).  
 - **Une vraie messagerie** : le fil dans un panneau bien visible, les bulles de chacun (les tiennes à droite), l’heure, les jours. Les liens sont cliquables et s’ouvrent dans un nouvel onglet ; on peut mettre un cœur sur n’importe quel message (double-clic). On ne compte rien d’autre que des totaux : clics par lien, cœurs par message.  
 - **Une barre d’icônes toujours visible** (à gauche en paysage, en haut en portrait) : Discussion, Favoris (les plus aimés, ou mes cœurs), Post-it, et dans un salon gardé Images, Vidéos, Documents, avec le nombre de fichiers en pastille.  
-- **Messages vocaux et vidéos** dans les salons gardés : le « + » à côté du trombone ouvre l’enregistreur maison ; on réécoute ou on revoit avant d’envoyer, et le navigateur compresse (une minute de voix ≈ 240 Ko, une minute de vidéo 720p ≈ 9 Mo).  
+- **Messages vocaux, vidéos et partage d’écran** dans les salons gardés : le « + » à côté du trombone ouvre l’enregistreur maison (message vocal, vidéo, ou « Mon écran + micro » sur ordinateur, pour montrer quelque chose sans la caméra) ; on réécoute ou on revoit avant d’envoyer, et le navigateur compresse (une minute de voix ≈ 240 Ko, une minute de vidéo 720p ≈ 9 Mo).  
 - **Les liens rangés aussi** : une vidéo YouTube, Vimeo ou Dailymotion partagée en lien rejoint les Vidéos avec sa miniature et son titre (récupérés et gardés par le serveur : les navigateurs ne contactent pas ces plateformes) ; les autres liens rejoignent les Documents, avec leur total de clics. Tout s’ouvre dans un nouvel onglet.  
-- **Partage de fichiers** dans les salons gardés : 10 Go par salon. On envoie à l’arrache (trombone, glisser-déposer n’importe où, coller) et tout se range tout seul d’après le contenu ; miniatures pour les photos, visionneuse, téléchargement.  
+- **Partage de fichiers** dans les salons gardés : jusqu’à 1001 Go par salon (le serveur garde toujours 5 Go libres ; les fichiers passeront sur un CDN avant l’ouverture). On envoie à l’arrache (trombone, glisser-déposer n’importe où, coller) et tout se range tout seul d’après le contenu ; miniatures pour les photos, visionneuse, téléchargement.  
 - **Chat en temps réel** par salon : REST pour poster, WebSocket pour recevoir.  
 - **Sloubi compteur** dans les tavernes, arbitré par le serveur :  
   - il faut écrire `sloubi <N>` (casse indifférente, ex. `Sloubi 42`) où **N est exactement le prochain numéro** ;  
@@ -47,6 +49,8 @@ Ici, pas d’algos, pas de pub, pas de flicage. Juste un compteur communautaire 
 ---
 
 ## Structure
+
+La documentation détaillée (architecture, API, sécurité, exploitation, pièges, historique, à faire) est dans [`docs/`](docs/README.md).
 
 ```
 sloubi.chat/
@@ -89,6 +93,8 @@ cp forbidden.example.json forbidden.json   # puis complète-le : sans lui, le se
 
 Pour la prod : derrière un proxy (Caddy), avec les drop-ins systemd de `deploy/` (`hardening.conf`, et `turn.conf` pour le relais des appels).
 
+Configuration : copie `.env.example` en `.env` (lu au démarrage, ignoré par git) pour `ADMIN_EMAIL` et l’envoi des codes de connexion (SMTP, par exemple Gmail avec un mot de passe d’application, ou l’API Brevo). Sans envoi configuré, les codes s’écrivent dans le journal du service.
+
 ### Depuis les sources
 
 ```
@@ -128,6 +134,8 @@ govulncheck ./...
 | Méthode | Route | Rôle |
 |---|---|---|
 | `GET` | `/` | Accueil. |
+| `GET` | `/_/domaine?domain=…` | Pour le TLS à la demande du proxy, en local seulement : 200 si le domaine est rattaché à un lieu, 404 sinon. |
+| `GET` | `/_/compte` | Mon compte : connexion par code e-mail, mes lieux, et pour l’admin les demandes à valider. |
 | `GET` | `/_/` | Le registre : tous les salons, les plus récemment actifs d’abord (sloubis, messages, dernière activité). `noindex`, cache de 15 s. Aucun salon ne peut commencer par `_`, donc pas de collision. |
 | `GET` | `/<chan>` | Page du salon. Majuscules → redirection 301 ; nom invalide ou interdit → 404 (accueil, nom en rouge). |
 | `GET` | `/api/check/<chan>` | `{name, ok, reason, exists, theme, locked}` ; `reason` ∈ `invalid`, `toolong`, `forbidden`. |
@@ -137,7 +145,13 @@ govulncheck ./...
 | `POST` | `/api/<chan>/postit` | `{clientId, text}` → le post-it, diffusé à tout le salon. |
 | `GET` | `/ws/<chan>` | WebSocket : 100 derniers messages et post-it, puis le direct. Événements `{type: "message" \| "postit" \| "room", ...}` ; `room` (nouveau décor ou nouvelle serrure) précède une déconnexion, le client recharge. Le client envoie `{type: "call", op: "join" \| "leave" \| "signal" \| "state" \| "live" \| "handoff" \| "handoff-decline"}` (et `{type: "hello", push}` pour dire quel abonnement aux notifications est le sien) ; le serveur répond `joined`, `full`, `denied`, `nick-required`, `stage-busy`, `handoff`, `handoff-declined`, `signal` (relayé au seul destinataire) et `roster` (à tout le salon, avec `live` : qui est sur scène). |
 | `GET` | `/api/<chan>/info` | `{exists, theme, locked, access, owner, claimable}`, plus `{messages, lastId, sloubi}` si on a accès. En-tête `X-Owner-Key` pour savoir si l’on est le créateur. |
-| `POST` | `/api/<chan>/settings` | `{ownerKey, theme?, password?, removePassword?}`. Sur un lieu qui n’existe pas, le fonde et renvoie `ownerKey`. Thèmes : `taverne`, `foret`, `moulin`. Mot de passe de 4 à 128 caractères. |
+| `POST` | `/api/<chan>/settings` | `{ownerKey, theme?, password?, removePassword?}`. Sur un lieu qui n’existe pas, le fonde et renvoie `ownerKey`. Thèmes : `taverne`, `foret`, `moulin`, `cyber`, `kawaii`, `bd`. Mot de passe de 4 à 128 caractères, **avec une session** (`401 login required` sinon) ; pour un membre pas encore validé, la réponse porte `pending: true` et le lieu reste ouvert. Un lieu rattaché à un compte ne se règle plus avec la clé seule. |
+| `POST` | `/api/_compte/code` | `{email}` → envoie un code à 6 chiffres (10 min ; un renvoi par minute). |
+| `POST` | `/api/_compte/verify` | `{email, code}` → crée le compte au besoin et pose la session (`sloubi_session`, HttpOnly, 90 jours). |
+| `GET` | `/api/_compte/me` | `{signedIn, email, role, status, rooms}` ; `status` ∈ `aucun`, `en-attente`, `valide`, `refuse`. |
+| `POST` | `/api/_compte/logout` | Ferme la session. |
+| `GET` | `/api/_admin/users` | Admin : les comptes et leurs lieux, demandes en attente d’abord. |
+| `POST` | `/api/_admin/users/<id>` | Admin : `{action: "valider" \| "refuser" \| "retirer"}`. Valider active les mots de passe demandés. |
 | `POST` | `/api/<chan>/unlock` | `{password}` → pose le cookie d’accès (`HttpOnly`, 30 jours). |
 | `GET` | `/api/<chan>/turn` | Serveurs ICE d’un appel : STUN, et TURN avec identifiants éphémères (6 h) si `TURN_SECRET` ou `TURN_SECRET_FILE` est défini. Lieu gardé et cookie d’accès requis. |
 | `GET` | `/api/push-key` | Clé publique VAPID des notifications. |
@@ -154,7 +168,7 @@ Sur un lieu verrouillé, toutes les routes de l’API du salon et le WebSocket r
 
 ## Stockage
 
-- **SQLite** (`db/chat.sqlite`, mode WAL) : tables `messages` (avec `channel`), `channels` (avec `theme`, l’empreinte SHA-256 de la clé du créateur et le mot de passe haché), `postits`, `tags` (les `#mots`) et `meta` (la clé HMAC des cookies d’accès). Les migrations tournent au démarrage ; les messages d’avant les salons sont dans `chante`.  
+- **SQLite** (`db/chat.sqlite`, mode WAL) : tables `messages` (avec `channel`), `channels` (avec `theme`, l’empreinte SHA-256 de la clé du créateur, le compte propriétaire, le mot de passe haché et celui qui attend l’admin), `users` et `otp_codes`, `postits`, `tags` (les `#mots`) et `meta` (la clé HMAC des cookies d’accès). Les migrations tournent au démarrage ; les messages d’avant les salons sont dans `chante`.  
 - Le serveur calcule les sloubis (le client ne décide rien), de façon atomique : deux `sloubi N` simultanés n’en valident qu’un (`UNIQUE(channel, sloubi_number)`).  
 - Horodatage côté serveur.  
 
@@ -176,7 +190,7 @@ Ici, **sloubi = liberté**.
 ## Sécurité & Vie privée
 
 - Pas de tracking tiers, pas de pub, pas d’export des données utilisateurs.  
-- Pas de comptes : ton pseudo et ton `clientId` restent dans ton navigateur ; le `clientId` n’est jamais renvoyé aux autres.  
+- Pas de compte pour discuter : ton pseudo et ton `clientId` restent dans ton navigateur ; le `clientId` n’est jamais renvoyé aux autres. Le compte (une adresse e-mail, connexion par code à 6 chiffres valable 10 minutes, 5 essais, codes gardés hachés) ne sert qu’à garder un lieu par mot de passe.  
 - Mots de passe hachés en PBKDF2-SHA256 (210 000 itérations, sel aléatoire), essais limités par IP avec ban temporaire. Le cookie d’accès est un HMAC lié au hachage : changer le mot de passe invalide tous les cookies. La clé du créateur n’est stockée que sous forme d’empreinte. Un lieu verrouillé apparaît dans `/_/` avec un cadenas, sans ses chiffres.  
 - Messages et post-its affichés en texte brut (`textContent`), caractères de contrôle retirés côté serveur.  
 - Limites : message 500 caractères, pseudo 24, post-it 280, corps de requête 4 Ko. Un pseudo invalide envoyé avec un message devient `Anonyme`.  

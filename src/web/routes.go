@@ -45,6 +45,10 @@ type server struct {
 	anyLimit    *Limiter // toutes les requêtes : plafond large, contre les inondations
 	reactLimit  *Limiter // likes et clics de liens
 	uploadLimit *Limiter // envois de fichiers
+	codeLimit   *Limiter // codes de connexion envoyés par e-mail
+	mail        codeMailer
+	siteURL     string          // https://sloubi.chat : où repartent les domaines inconnus (domains.go)
+	siteHosts   map[string]bool // les hôtes du site ; nil = pas de domaines perso (tests)
 	uploads     reservations
 	videos      *videoFetcher // miniatures et titres des vidéos partagées en lien
 
@@ -128,7 +132,14 @@ func Run(addr string) {
 		anyLimit:    NewLimiter(30, 120, 0, 0),
 		reactLimit:  NewLimiter(3, 20, 0, 0),
 		uploadLimit: NewLimiter(2, 40, 0, 0),
+		codeLimit:   NewLimiter(1.0/30, 4, 0, 0),
+		mail:        newMailer(),
 		turn:        loadTurn(),
+	}
+	s.siteURL, s.siteHosts = loadSite()
+	// le seul admin, propriétaire des lieux qui existaient avant les comptes
+	if err := store.ensureAdmin(strings.ToLower(strings.TrimSpace(os.Getenv("ADMIN_EMAIL")))); err != nil {
+		log.Fatalf("admin: %v", err)
 	}
 	s.push = newPusher(store)
 	s.videos = newVideoFetcher()
@@ -159,7 +170,7 @@ func (s *server) router() *gin.Engine {
 	if err := r.SetTrustedProxies([]string{"127.0.0.1", "::1"}); err != nil {
 		log.Fatal(err)
 	}
-	r.Use(gin.Logger(), gin.Recovery(), securityHeaders, s.floodGuard, gzip.Gzip(gzip.DefaultCompression, gzip.WithExcludedPaths([]string{"/ws"}),
+	r.Use(gin.Logger(), gin.Recovery(), securityHeaders, s.floodGuard, s.hostGate, gzip.Gzip(gzip.DefaultCompression, gzip.WithExcludedPaths([]string{"/ws"}),
 		// les fichiers : déjà compressés, et leurs envois longs ont besoin de l'écrivain d'origine (délais prolongés)
 		gzip.WithExcludedPathsRegexs([]string{`^/api/[^/]+/files`})))
 
@@ -168,6 +179,13 @@ func (s *server) router() *gin.Engine {
 	// API
 	r.GET("/api/check/:chan", s.check)
 	r.POST("/api/nick", s.nick)
+	// comptes (accounts.go) : "_" ne peut pas commencer un nom de salon, donc pas de collision
+	r.POST("/api/_compte/code", s.authCode)
+	r.POST("/api/_compte/verify", s.authVerify)
+	r.POST("/api/_compte/logout", s.authLogout)
+	r.GET("/api/_compte/me", s.authMe)
+	r.GET("/api/_admin/users", s.adminUsers)
+	r.POST("/api/_admin/users/:id", s.adminDecide)
 	r.POST("/api/:chan/messages", s.postMessage(s.paramChannel))
 	r.GET("/api/:chan/last-sloubi", s.lastSloubi(s.paramChannel))
 	r.POST("/api/:chan/postit", s.postPostit)
@@ -209,6 +227,8 @@ func (s *server) router() *gin.Engine {
 		c.HTML(http.StatusOK, "home.html", gin.H{})
 	})
 	r.GET("/_/", s.directory) // aucun salon ne peut commencer par _ : pas de collision
+	r.GET("/_/compte", s.accountPage)
+	r.GET("/_/domaine", s.domainAsk) // le proxy demande s'il peut prendre un certificat pour un domaine
 	r.GET("/:chan", s.channelPage)
 	r.NoRoute(func(c *gin.Context) {
 		if strings.HasPrefix(c.Request.URL.Path, "/api/") {
@@ -337,17 +357,36 @@ func (s *server) channelPage(c *gin.Context) {
 		c.Redirect(http.StatusMovedPermanently, "/"+name)
 		return
 	}
+	s.renderRoom(c, name, false)
+}
+
+// renderRoom : la page d'un lieu, sur sloubi.chat/<lieu> ou sur / de son domaine perso.
+func (s *server) renderRoom(c *gin.Context, name string, custom bool) {
 	r, err := s.store.room(name)
 	if err != nil {
 		c.String(http.StatusInternalServerError, "db error")
 		return
 	}
+	// sur un domaine perso, / est le lieu : l'accueil et le compte sont sur le site
+	home, base, account := "/", "/"+name, "/_/compte?retour=/"+name
+	title, app, icon, touch := "/"+name+" · Sloubi.chat", "Sloubi", "/assets/icon-192.png", "/assets/icon-192.png"
+	if custom { // sur son domaine, le lieu est sa propre application : son nom, son initiale
+		home, base, account = s.siteURL+"/", "/", s.siteURL+"/_/compte"
+		title, app, icon, touch = appName(name), appName(name), "/favicon.png", "/apple-touch-icon.png"
+	}
 	c.HTML(http.StatusOK, "room.html", gin.H{
-		"Chan":   name,
-		"Theme":  themeOf(r.Theme),
-		"Themes": themeList(),
-		"Locked": !s.hasAccess(c, name, r),
-		"Calls":  r.Locked() && s.hasAccess(c, name, r), // on s'appelle seulement entre gens qui ont le mot de passe
+		"Chan":    name,
+		"Theme":   themeOf(r.Theme),
+		"Themes":  themeList(),
+		"Locked":  !s.hasAccess(c, name, r),
+		"Calls":   r.Locked() && s.hasAccess(c, name, r), // on s'appelle seulement entre gens qui ont le mot de passe
+		"Home":    home,
+		"Base":    base,
+		"Account": account,
+		"Title":   title,
+		"AppName": app,
+		"Icon":    icon,
+		"Touch":   touch,
 	})
 }
 

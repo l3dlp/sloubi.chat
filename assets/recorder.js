@@ -1,10 +1,12 @@
-/* recorder.js — l'enregistreur maison : un message vocal ou une vidéo, sans
-   quitter le salon. Le navigateur compresse pendant l'enregistrement
+/* recorder.js — l'enregistreur maison : un message vocal, une vidéo, ou son
+   écran commenté au micro (sans caméra), sans quitter le salon. Le navigateur compresse pendant l'enregistrement
    (MediaRecorder) : la voix en Opus à 32 kbit/s, la vidéo en 720p à
    1,2 Mbit/s. On réécoute, on revoit, puis l'enregistrement part comme
    n'importe quel fichier (library.js), et le serveur le range tout seul. */
 
 'use strict';
+
+import { Camera, mountControls } from '/assets/camfx.js';
 
 const button = document.getElementById('recordButton');
 const menu = document.getElementById('recordMenu');
@@ -21,11 +23,14 @@ const btn = {
   stop: document.getElementById('recStop'),
   send: document.getElementById('recSend'),
   retry: document.getElementById('recRetry'),
-  flip: document.getElementById('recFlip'),
   cancel: document.getElementById('recCancel'),
 };
 
-const LIMITS = { audio: 15 * 60, video: 5 * 60 }; // secondes
+const LIMITS = { audio: 15 * 60, video: 5 * 60, screen: 10 * 60 }; // secondes
+const TITLES = { audio: 'Message vocal', video: 'Vidéo', screen: 'Mon écran' };
+const visual = () => kind !== 'audio'; // une image à montrer : la caméra ou l'écran
+const canShare = !!navigator.mediaDevices?.getDisplayMedia && !matchMedia('(pointer: coarse)').matches;
+let display = null; // le partage d'écran (ses pistes s'arrêtent avec le reste)
 
 let kind = 'audio';
 let stream = null;
@@ -35,7 +40,8 @@ let blob = null;
 let mime = '';
 let started = 0;
 let tick = null;
-let facing = 'user';
+let cam = null;      // la caméra (camfx.js) : changer de caméra, régler son image
+let camTools = null; // ses boutons, sur l'aperçu
 let actx = null;
 let raf = 0;
 let opener = null;
@@ -58,6 +64,9 @@ menu.addEventListener('click', (e) => {
   open(k);
 });
 menu.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeMenu(); button.focus(); } });
+// les navigateurs de téléphone ne savent pas partager l'écran : l'option n'apparaît que sur ordinateur
+const screenItem = menu.querySelector('[data-rec="screen"]');
+if (screenItem) screenItem.hidden = !canShare;
 document.addEventListener('click', (e) => { if (!e.target.closest('.rec-wrap')) closeMenu(); });
 
 /* ========== Le format : ce que le navigateur sait compresser ========== */
@@ -75,7 +84,7 @@ function fileName(k, type) {
   const stamp = `${d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' }).replace('/', '-')} ${String(d.getHours()).padStart(2, '0')}h${String(d.getMinutes()).padStart(2, '0')}`;
   const mp4 = type.startsWith('audio/mp4') || type.startsWith('video/mp4');
   if (k === 'audio') return `Message vocal ${stamp}.${mp4 ? 'm4a' : type.startsWith('audio/ogg') ? 'ogg' : 'weba'}`;
-  return `Vidéo ${stamp}.${mp4 ? 'mp4' : 'webm'}`;
+  return `${k === 'screen' ? 'Écran' : 'Vidéo'} ${stamp}.${mp4 ? 'mp4' : 'webm'}`;
 }
 
 /* ========== Ouvrir, fermer ========== */
@@ -90,23 +99,39 @@ async function open(k) {
   }
   opener = document.activeElement;
   kind = k;
-  title.textContent = k === 'audio' ? 'Message vocal' : 'Vidéo';
+  title.textContent = TITLES[k];
+  box.dataset.kind = k;
   box.hidden = false;
-  btn.flip.hidden = k !== 'video' || !matchMedia('(pointer: coarse)').matches; // retourner : sur téléphone
   setState('asking');
   await getStream();
 }
 
 async function getStream() {
   stopStream();
+  if (kind === 'screen') { await getScreen(); return; }
   try {
-    stream = await navigator.mediaDevices.getUserMedia(kind === 'audio'
-      ? { audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }
-      : {
-        audio: { echoCancellation: true, noiseSuppression: true },
-        video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 }, facingMode: facing },
+    if (kind === 'audio') {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+    } else {
+      // « stable » : l'image passe toujours par le canvas, la piste enregistrée ne change donc
+      // jamais, même si l'on change de caméra ou de réglage en pleine prise
+      cam = new Camera({
+        constraints: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 } },
+        stable: true,
+        onTrack: (t) => { // seulement sans canvas (vieux navigateur) : on suit la nouvelle piste hors enregistrement
+          if (!stream) return;
+          for (const v of stream.getVideoTracks()) stream.removeTrack(v);
+          stream.addTrack(t);
+          live.srcObject = stream;
+        },
       });
+      const video = await cam.open();
+      const mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+      stream = new MediaStream([video, ...mic.getAudioTracks()]);
+    }
   } catch (e) {
+    cam?.stop();
+    cam = null;
     setState('error', e?.name === 'NotAllowedError'
       ? `Il faut autoriser ${kind === 'audio' ? 'le micro' : 'la caméra et le micro'} dans le navigateur.`
       : `Impossible d’ouvrir ${kind === 'audio' ? 'le micro' : 'la caméra'}.`);
@@ -114,16 +139,56 @@ async function getStream() {
   }
   if (kind === 'video') {
     live.srcObject = stream;
-    live.classList.toggle('mirror', facing === 'user'); // son propre visage, comme dans un miroir
+    live.classList.toggle('mirror', cam.mirror); // son propre visage, comme dans un miroir
     live.play().catch(() => {});
+    camTools = mountControls(document.getElementById('recStage'), cam, { onSwitch: () => live.classList.toggle('mirror', cam.mirror) });
   } else {
     startMeter();
   }
   setState('ready');
 }
 
+// l'écran (onglet, fenêtre ou écran entier) et le micro par-dessus, pour commenter
+async function getScreen() {
+  try {
+    display = await navigator.mediaDevices.getDisplayMedia({
+      video: { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 15, max: 30 } },
+      audio: false,
+    });
+  } catch (e) {
+    setState('error', e?.name === 'NotAllowedError' ? 'Partage annulé. Tu peux réessayer avec « Recommencer ».' : 'Impossible de partager l’écran.');
+    btn.retry.hidden = false;
+    return;
+  }
+  const video = display.getVideoTracks()[0];
+  video.contentHint = 'detail'; // du texte à lire : on garde la netteté, quitte à perdre des images
+  // le bouton « Arrêter le partage » du navigateur : on arrête l'enregistrement, ou on referme
+  video.addEventListener('ended', () => {
+    if (recorder && recorder.state !== 'inactive') btn.stop.click();
+    else if (box.dataset.state === 'ready') close();
+  });
+  let micNote = '';
+  let mic = null;
+  try {
+    mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+  } catch {
+    micNote = 'Sans micro : l’écran sera enregistré sans le son.';
+  }
+  stream = new MediaStream([video, ...(mic ? mic.getAudioTracks() : [])]);
+  live.srcObject = stream;
+  live.classList.remove('mirror');
+  live.play().catch(() => {});
+  setState('ready', micNote ? `${micNote} Appuie sur « Enregistrer ».` : '');
+}
+
 function stopStream() {
+  camTools?.remove();
+  camTools = null;
+  cam?.stop();
+  cam = null;
   stream?.getTracks().forEach((t) => t.stop());
+  display?.getTracks().forEach((t) => t.stop());
+  display = null;
   stream = null;
   live.srcObject = null;
   cancelAnimationFrame(raf);
@@ -157,18 +222,19 @@ function setState(s, message = '') {
   box.dataset.state = s;
   const recording = s === 'recording';
   const done = s === 'review';
-  live.hidden = kind !== 'video' || done || s === 'error';
+  live.hidden = !visual() || done || s === 'error';
   meter.hidden = kind !== 'audio' || done || s === 'error';
-  review.hidden = !(done && kind === 'video');
+  review.hidden = !(done && visual());
   listen.hidden = !(done && kind === 'audio');
   btn.start.hidden = s !== 'ready';
   btn.stop.hidden = !recording;
   btn.send.hidden = !done;
   btn.retry.hidden = !done;
-  btn.flip.hidden = kind !== 'video' || !matchMedia('(pointer: coarse)').matches || recording || done;
+  camTools?.lockSwitch(recording && !cam?.canFilter);
+  camTools?.show(!done && s !== 'error'); // à la relecture, on regarde le résultat, pas la caméra
   btn.cancel.textContent = done ? 'Jeter' : 'Annuler';
   note.textContent = message || {
-    asking: kind === 'audio' ? 'On ouvre le micro…' : 'On ouvre la caméra…',
+    asking: { audio: 'On ouvre le micro…', video: 'On ouvre la caméra…', screen: 'Choisis ce que tu veux montrer : un onglet, une fenêtre ou tout l’écran.' }[kind],
     ready: `Appuie sur « Enregistrer ». ${Math.round(LIMITS[kind] / 60)} minutes au plus.`,
     recording: 'Ça enregistre. « Arrêter » quand tu as fini.',
     review: kind === 'audio' ? 'Réécoute, puis envoie (ou recommence).' : 'Revois, puis envoie (ou recommence).',
@@ -186,7 +252,9 @@ btn.start.addEventListener('click', () => {
   mime = pickMime(kind);
   const opts = kind === 'audio'
     ? { audioBitsPerSecond: 32000 } // une voix claire, ~240 Ko par minute
-    : { videoBitsPerSecond: 1200000, audioBitsPerSecond: 64000 }; // 720p net, ~9 Mo par minute
+    : kind === 'screen'
+      ? { videoBitsPerSecond: 1500000, audioBitsPerSecond: 64000 } // un écran net à 15 images/s, ~11 Mo par minute
+      : { videoBitsPerSecond: 1200000, audioBitsPerSecond: 64000 }; // 720p net, ~9 Mo par minute
   if (mime) opts.mimeType = mime;
   try {
     recorder = new MediaRecorder(stream, opts);
@@ -218,7 +286,7 @@ function finish() {
   chunks = [];
   stopStream(); // le micro et la caméra s'éteignent dès qu'on a fini
   const url = URL.createObjectURL(blob);
-  if (kind === 'video') review.src = url; else listen.src = url;
+  if (visual()) review.src = url; else listen.src = url;
   timeEl.textContent = `${clock((performance.now() - started) / 1000)} · ${humanSize(blob.size)}`;
   setState('review');
 }
@@ -237,10 +305,6 @@ btn.send.addEventListener('click', () => {
 });
 
 btn.cancel.addEventListener('click', close);
-btn.flip.addEventListener('click', async () => {
-  facing = facing === 'user' ? 'environment' : 'user';
-  await getStream();
-});
 box.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
 
 /* ========== Le vumètre : on voit que le micro entend ========== */

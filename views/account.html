@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <title>Mon compte · Sloubi.chat</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex, nofollow">
+    <meta name="theme-color" content="#0a0a09" media="(prefers-color-scheme: dark)">
+    <meta name="theme-color" content="#fafaf7" media="(prefers-color-scheme: light)">
+    <link rel="icon" href="/assets/icon-192.png">
+    <link rel="preload" href="/assets/fonts/permanentmarker.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="preload" href="/assets/fonts/archivo-regular.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="stylesheet" href="/assets/fonts/fonts.css">
+    <link rel="stylesheet" href="/assets/marker.css">
+    <link rel="stylesheet" href="/assets/home.css">
+    <link rel="stylesheet" href="/assets/account.css">
+</head>
+<body class="account">
+    <header class="top">
+        <a href="/" class="wordmark" aria-label="Sloubi.chat, accueil">SLOUBI<span>.CHAT</span></a>
+        <nav class="top-nav" aria-label="Compte">
+            <a href="/">Accueil</a>
+            <button type="button" class="top-logout" id="logout" hidden>Se déconnecter</button>
+        </nav>
+    </header>
+
+    <main class="acct">
+        <section class="acct-head">
+            <span class="kicker">Mon compte</span>
+            <h1 class="title" id="acctTitle">Connexion</h1>
+            <p class="acct-lead" id="acctLead">Pas besoin de compte pour discuter. Le compte sert à une chose&nbsp;: garder ses lieux par mot de passe, avec les fichiers, les vocaux et les appels qui vont avec. Pas de mot de passe à retenir&nbsp;: on reçoit un code par e-mail.</p>
+        </section>
+
+        <section class="acct-login" id="loginBox" hidden></section>
+
+        <section class="acct-block" id="mine" hidden>
+            <h2 class="acct-h">Mes lieux</h2>
+            <ul class="acct-rooms" id="myRooms"></ul>
+            <p class="acct-empty" id="myRoomsEmpty" hidden>Aucun lieu à ton nom pour l’instant. Fonde-en un depuis l’accueil, puis pose son mot de passe dans ses options.</p>
+        </section>
+
+        <section class="acct-block" id="admin" hidden>
+            <h2 class="acct-h">Les demandes</h2>
+            <p class="acct-note">Valider quelqu’un active les mots de passe qu’il a posés&nbsp;: ses lieux se ferment aussitôt. Tu ne vois jamais ces mots de passe.</p>
+            <ul class="acct-users" id="users"></ul>
+            <p class="acct-empty" id="usersEmpty" hidden>Personne d’autre que toi pour l’instant.</p>
+        </section>
+
+        <p class="acct-back" id="back" hidden><a id="backLink" href="/">Revenir</a></p>
+    </main>
+
+    <script src="/assets/account.js" type="module"></script>
+</body>
+</html>

@@ -1,0 +1,73 @@
+/* account.css — /_/compte, sur la base de home.css (mêmes couleurs, mêmes traits) */
+
+.top-logout {
+    border: 0;
+    background: none;
+    font: 500 0.95rem var(--font-body);
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+.top-logout:hover { color: var(--text-main); text-decoration: underline; text-decoration-color: var(--accent); }
+.top-nav { align-items: center; }
+
+.acct { max-width: 52rem; padding-bottom: 5rem; }
+.acct-head { padding-top: clamp(2.5rem, 8vh, 5rem); animation: rise 0.5s var(--ease) both; }
+.acct-head .title { margin-bottom: 1rem; overflow-wrap: anywhere; }
+.acct-lead { max-width: 40rem; font-size: 1.1rem; }
+
+.acct-login { margin-top: 2rem; }
+.acct-block { margin-top: 3rem; padding-top: 1.4rem; border-top: 4px solid; border-image: var(--mk-soft) 12 round; }
+.acct-h { font: 600 1.35rem/1.2 var(--font-body); color: var(--text-main); margin-bottom: 1rem; }
+.acct-note, .acct-empty { font-size: 0.98rem; color: var(--text-dim); margin-bottom: 1rem; }
+
+.acct-rooms { list-style: none; display: grid; gap: 0.35rem; }
+.acct-room { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.3rem 1rem; }
+.acct-room a { font-weight: 600; }
+.acct-state { font-size: 0.92rem; color: var(--text-dim); }
+.acct-state.is-pending { color: var(--acc-fg); }
+
+.acct-users { list-style: none; display: grid; gap: 1.2rem; }
+.acct-user { display: grid; gap: 0.6rem; padding: 1rem 1.1rem; background: var(--surface); border-radius: 4px; }
+.acct-user.is-en-attente { box-shadow: inset 4px 0 0 var(--accent); }
+.acct-user-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.2rem 1rem; }
+.acct-user-head b { color: var(--text-main); font-weight: 600; overflow-wrap: anywhere; }
+.acct-actions { display: flex; flex-wrap: wrap; gap: 0.6rem; }
+
+.acct-btn, .otp-btn {
+    padding: 0.55rem 1.1rem;
+    border: 2px solid var(--text-main);
+    border-radius: 999px;
+    background: transparent;
+    font: 600 0.98rem var(--font-body);
+    color: var(--text-main);
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+.acct-btn:hover, .otp-btn:hover { background: var(--text-main); color: var(--bg); }
+.acct-btn.is-main, .otp-btn { background: var(--accent); border-color: var(--accent); color: #140a00; }
+.acct-btn.is-main:hover, .otp-btn:hover { background: var(--text-main); border-color: var(--text-main); color: var(--bg); }
+.acct-btn:disabled, .otp-btn:disabled { opacity: 0.6; cursor: wait; }
+
+.acct-back { margin-top: 3rem; font-weight: 600; }
+
+/* le formulaire de connexion (login.js) */
+.otp { display: grid; gap: 0.8rem; max-width: 34rem; }
+.otp-step { display: grid; gap: 0.7rem; }
+.otp-row { display: flex; flex-wrap: wrap; align-items: end; gap: 0.8rem 1.2rem; }
+.otp-input {
+    flex: 1 1 14rem;
+    min-width: 0;
+    padding: 0.55rem 0;
+    border: 0;
+    border-bottom: 4px solid;
+    border-image: var(--mk-soft) 12 round;
+    outline: 0;
+    background: transparent;
+    font: 500 1.3rem var(--font-body);
+    color: var(--text-main);
+}
+.otp-code { flex: 0 1 11rem; letter-spacing: 0.4em; font-variant-numeric: tabular-nums; }
+.otp-sent b { color: var(--text-main); font-weight: 600; overflow-wrap: anywhere; }
+.otp-link { justify-self: start; border: 0; background: none; font: inherit; font-size: 0.95rem; color: var(--text-secondary); text-decoration: underline; cursor: pointer; }
+.otp-note { min-height: 1.4em; font-size: 0.98rem; color: var(--text-main); }
+.otp-note.is-bad { color: var(--err); }

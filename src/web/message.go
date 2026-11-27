@@ -32,6 +32,8 @@ type client struct {
 	listen bool   // spectateur : sans micro
 	tag    string // identifiant de notifications du navigateur (push.go), annoncé par « hello »
 
+	presNick string // le pseudo annoncé par « hello » (presence.go), protégé par Hub.mu
+
 	// seau à jetons des messages entrants : seul readPump y touche
 	tokens float64
 	last   time.Time
@@ -42,12 +44,16 @@ type Hub struct {
 	mu    sync.Mutex
 	rooms map[string]map[*client]struct{}
 	calls map[string]map[*client]struct{} // qui est dans l'appel de chaque salon
-	stage map[string]*client              // qui est en live dans chaque appel (une personne à la fois)
-	relay map[string]*client              // à qui la personne en live propose la scène (passage de relais)
+	stage map[string][]*client            // qui est en live dans chaque appel (maxLive à la fois, dans l'ordre d'arrivée)
+	relay map[*client]*client             // passage de relais : la personne sollicitée → la personne en live qui lui propose sa place
+
+	presence  map[string]map[string]int // salon → pseudo → connexions (presence.go)
+	presOut   map[string]*time.Timer    // sorties en attente (presenceGrace)
+	presGrace time.Duration             // 0 = presenceGrace ; les tests le raccourcissent
 }
 
 func NewHub() *Hub {
-	return &Hub{rooms: make(map[string]map[*client]struct{}), calls: make(map[string]map[*client]struct{}), stage: make(map[string]*client), relay: make(map[string]*client)}
+	return &Hub{rooms: make(map[string]map[*client]struct{}), calls: make(map[string]map[*client]struct{}), stage: make(map[string][]*client), relay: make(map[*client]*client)}
 }
 
 // Événements WS. Les champs du message restent à plat (l'embed est aplati par
@@ -111,6 +117,7 @@ func (h *Hub) dropLocked(c *client) {
 		delete(h.rooms, c.channel)
 	}
 	h.callLeaveLocked(c) // une connexion perdue quitte l'appel
+	h.presenceLeaveLocked(c)
 }
 
 // sendLocked n'attend jamais : buffer plein = client déconnecté.

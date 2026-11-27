@@ -13,9 +13,10 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin:     sameOrigin,
 }
 
-// sameOrigin : l'Origin doit correspondre au Host demandé (Caddy transmet le Host
-// d'origine). Sans Origin (curl, outils), on laisse passer : ce n'est pas un navigateur
-// piégé par un site tiers, et le rate-limit s'applique quand même.
+// sameOrigin : l'Origin doit correspondre à l'hôte demandé (requestHost : le Host,
+// ou X-Forwarded-Host derrière un relais local). Sans Origin (curl, outils), on
+// laisse passer : ce n'est pas un navigateur piégé par un site tiers, et le
+// rate-limit s'applique quand même.
 func sameOrigin(r *http.Request) bool {
 	origin := r.Header.Get("Origin")
 	if origin == "" {
@@ -25,5 +26,5 @@ func sameOrigin(r *http.Request) bool {
 	if err != nil {
 		return false
 	}
-	return u.Host == r.Host
+	return normHost(u.Host) == requestHost(r)
 }

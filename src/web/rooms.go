@@ -33,7 +33,6 @@ type Theme struct {
 	Description  string
 	CounterLabel string
 	Placeholder  string
-	Welcome      string
 	Color        string // theme-color du navigateur
 	FX           string // la scène Three.js, dans assets/
 }
@@ -46,7 +45,6 @@ var themes = map[string]Theme{
 		Description:  "Une taverne enfumée où l'on compte les sloubis.",
 		CounterLabel: "sloubis comptés",
 		Placeholder:  "Écrivez « sloubi 1 » pour compter...",
-		Welcome:      "La fumée s'écarte. Bienvenue, voyageur.",
 		Color:        "#140b07",
 		FX:           "room-fx.js",
 	},
@@ -55,7 +53,6 @@ var themes = map[string]Theme{
 		Description:  "Une forêt nourricière où chaque microbiote est une encyclopédie.",
 		CounterLabel: "graines semées",
 		Placeholder:  "Sème une idée… un #mot fait pousser un microbiote",
-		Welcome:      "Les fougères s'écartent. Bienvenue, promeneur.",
 		Color:        "#08130c",
 		FX:           "forest-fx.js",
 	},
@@ -64,7 +61,6 @@ var themes = map[string]Theme{
 		Description:  "Un moulin au bord de la rivière : on discute au bord de l'eau.",
 		CounterLabel: "tours de roue",
 		Placeholder:  "Dis quelque chose au fil de l'eau…",
-		Welcome:      "La roue grince, l'eau chante. Assieds-toi sur la berge.",
 		Color:        "#0d1a24",
 		FX:           "mill-fx.js",
 	},
@@ -73,7 +69,6 @@ var themes = map[string]Theme{
 		Description:  "Un fanzine photocopié de 1984 : collages, néons, bandes VHS.",
 		CounterLabel: "paquets piratés",
 		Placeholder:  "Colle ton message sur le mur…",
-		Welcome:      "SYS> Connexion établie. Personne ne vous a vus entrer. Enfin, presque.",
 		Color:        "#0d0614",
 		FX:           "cyber-fx.js",
 	},
@@ -82,7 +77,6 @@ var themes = map[string]Theme{
 		Description:  "Un ciel pastel où tout a des yeux, même le bouton envoyer.",
 		CounterLabel: "câlins envoyés",
 		Placeholder:  "Dis un truc gentil…",
-		Welcome:      "Coucou ! Ici tout le monde est gentil. Même le bouton. Surtout le bouton.",
 		Color:        "#ffe4f1",
 		FX:           "kawaii-fx.js",
 	},
@@ -91,7 +85,6 @@ var themes = map[string]Theme{
 		Description:  "Une planche franco-belge en ligne claire : bulles, cartouches, onomatopées.",
 		CounterLabel: "cases dessinées",
 		Placeholder:  "Ta réplique… (un BOUM ! fait du bruit)",
-		Welcome:      "Pendant ce temps, dans un salon pas comme les autres…",
 		Color:        "#fdf6e3",
 		FX:           "bd-fx.js",
 	},
@@ -124,19 +117,25 @@ type Room struct {
 	Theme     string
 	OwnerHash string
 	PwHash    string
+	OwnerUser int64  // le compte propriétaire (accounts.go) ; prime sur la clé de créateur
+	PwPending string // mot de passe demandé, en attente de l'admin : le lieu reste ouvert
+	Domain    string // domaine perso (domains.go)
 }
 
 func (r Room) Locked() bool { return r.PwHash != "" }
 
 func (s *Store) room(channel string) (Room, error) {
 	r := Room{Theme: DefaultTheme}
-	var owner, pw sql.NullString
-	err := s.DB.QueryRow(`SELECT theme, owner_hash, pw_hash FROM channels WHERE name = ?`, channel).Scan(&r.Theme, &owner, &pw)
+	var owner, pw, pending, domain sql.NullString
+	var user sql.NullInt64
+	err := s.DB.QueryRow(`SELECT theme, owner_hash, pw_hash, owner_user, pw_pending, domain FROM channels WHERE name = ?`, channel).
+		Scan(&r.Theme, &owner, &pw, &user, &pending, &domain)
 	switch err {
 	case sql.ErrNoRows:
 		return r, nil
 	case nil:
 		r.Exists, r.OwnerHash, r.PwHash = true, owner.String, pw.String
+		r.OwnerUser, r.PwPending, r.Domain = user.Int64, pending.String, domain.String
 		return r, nil
 	default:
 		return r, err
@@ -164,12 +163,6 @@ func (s *Store) claimOwner(channel, ownerHash string) error {
 
 func (s *Store) setTheme(channel, theme string) error {
 	_, err := s.DB.Exec(`UPDATE channels SET theme = ? WHERE name = ?`, theme, channel)
-	return err
-}
-
-// setPassword pose (ou retire, avec "") le mot de passe haché.
-func (s *Store) setPassword(channel, pwHash string) error {
-	_, err := s.DB.Exec(`UPDATE channels SET pw_hash = NULLIF(?, '') WHERE name = ?`, pwHash, channel)
 	return err
 }
 
@@ -328,6 +321,21 @@ func ownerHash(key string) string {
 	return hex.EncodeToString(h[:])
 }
 
+// canSettle : qui règle un lieu. L'admin, tous ; un lieu qui a un compte
+// propriétaire, ce compte seul ; sinon, la clé de créateur.
+func canSettle(r Room, key string, u *User) bool {
+	if !r.Exists {
+		return false
+	}
+	if u.admin() {
+		return true
+	}
+	if r.OwnerUser != 0 {
+		return u != nil && u.ID == r.OwnerUser
+	}
+	return isOwner(r, key)
+}
+
 func isOwner(r Room, key string) bool {
 	return r.OwnerHash != "" && key != "" &&
 		subtle.ConstantTimeCompare([]byte(ownerHash(key)), []byte(r.OwnerHash)) == 1
@@ -388,7 +396,7 @@ func (s *server) grantAccess(c *gin.Context, channel string, r Room) {
 		Path:     "/",
 		MaxAge:   accessMaxAge,
 		HttpOnly: true,
-		Secure:   c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https",
+		Secure:   s.secureRequest(c),
 		SameSite: http.SameSiteLaxMode,
 	})
 }
@@ -434,12 +442,22 @@ func (s *server) info(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "db error"})
 		return
 	}
+	u := s.user(c)
+	owner := canSettle(r, c.GetHeader("X-Owner-Key"), u)
 	out := gin.H{
 		"exists": r.Exists, "theme": r.Theme, "locked": r.Locked(),
 		"access": s.hasAccess(c, channel, r),
-		"owner":  isOwner(r, c.GetHeader("X-Owner-Key")),
+		"owner":  owner,
 		// un lieu fondé avant les réglages n'a pas de créateur : personne ne peut le régler
 		"claimable": !r.Exists,
+		// le mot de passe est réservé aux membres validés : de quoi dire au créateur où il en est
+		"signedIn": u != nil,
+		"member":   u.mayLock(),
+		"pending":  owner && r.PwPending != "",
+		"domain":   r.Domain,
+	}
+	if u != nil {
+		out["status"] = u.Status
 	}
 	if out["access"] == true {
 		n, last, sloubi, err := s.store.roomStats(channel)
@@ -500,9 +518,18 @@ func (s *server) settings(c *gin.Context) {
 		Theme          string  `json:"theme"`
 		Password       *string `json:"password"`
 		RemovePassword bool    `json:"removePassword"`
+		Domain         *string `json:"domain"` // "" retire le domaine
 	}
 	if !readJSON(c, 2048, &in) {
 		return
+	}
+	var domain string
+	if in.Domain != nil {
+		var err error
+		if domain, err = s.cleanDomain(*in.Domain); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid domain"})
+			return
+		}
 	}
 	if in.Theme != "" {
 		if _, ok := themes[in.Theme]; !ok {
@@ -510,10 +537,16 @@ func (s *server) settings(c *gin.Context) {
 			return
 		}
 	}
+	u := s.user(c)
 	var pwHash string
 	if in.Password != nil {
 		if n := utf8.RuneCountInString(*in.Password); n < minPasswordLen || n > maxPasswordLen || !utf8.ValidString(*in.Password) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "password length"})
+			return
+		}
+		// un mot de passe se pose avec un compte (connexion par e-mail) : l'admin valide qui garde ses lieux
+		if u == nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "login required"})
 			return
 		}
 		var err error
@@ -545,18 +578,46 @@ func (s *server) settings(c *gin.Context) {
 		}
 		if created {
 			newKey, in.OwnerKey = key, key
+			if u != nil { // fondé par quelqu'un de connecté : le lieu est à son compte
+				if err := s.store.setOwnerUser(channel, u.ID); err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "db error"})
+					return
+				}
+			}
 		}
 		if r, err = s.store.room(channel); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "db error"})
 			return
 		}
 	}
-	if !isOwner(r, in.OwnerKey) {
+	if !canSettle(r, in.OwnerKey, u) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "not owner"})
 		return
 	}
 
-	changed := false
+	if in.Domain != nil && domain != r.Domain {
+		// rattacher un domaine (et donc un certificat) : membres validés et admin seulement
+		if domain != "" && !u.mayLock() {
+			if u == nil {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "login required"})
+			} else {
+				c.JSON(http.StatusForbidden, gin.H{"error": "members only"})
+			}
+			return
+		}
+		switch err := s.store.setDomain(channel, domain); err {
+		case nil:
+			r.Domain = domain
+		case errDomainTaken:
+			c.JSON(http.StatusConflict, gin.H{"error": "domain taken"})
+			return
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "db error"})
+			return
+		}
+	}
+
+	changed, pending := false, false
 	if in.Theme != "" && in.Theme != r.Theme {
 		if err := s.store.setTheme(channel, in.Theme); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "db error"})
@@ -565,22 +626,27 @@ func (s *server) settings(c *gin.Context) {
 		r.Theme, changed = in.Theme, true
 	}
 	switch {
-	case pwHash != "":
-		r.PwHash = pwHash
-	case in.RemovePassword && r.Locked():
-		r.PwHash = ""
-	default:
-		pwHash = "-" // inchangé
-	}
-	if pwHash != "-" {
-		if err := s.store.setPassword(channel, r.PwHash); err != nil {
+	case pwHash != "" && !u.mayLock():
+		// pas encore validé : c'est une demande. Le lieu reste tel quel jusqu'à la réponse de l'admin.
+		if err := s.store.requestLock(channel, u.ID, pwHash); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "db error"})
 			return
 		}
-		changed = true
-		if r.Locked() {
-			s.grantAccess(c, channel, r) // le créateur garde la porte ouverte pour lui
+		pending = true
+	case pwHash != "":
+		if err := s.store.lock(channel, u.ID, pwHash); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "db error"})
+			return
 		}
+		r.PwHash, changed = pwHash, true
+		s.grantAccess(c, channel, r) // le créateur garde la porte ouverte pour lui
+	case in.RemovePassword && (r.Locked() || r.PwPending != ""):
+		if err := s.store.lock(channel, 0, ""); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "db error"})
+			return
+		}
+		changed = changed || r.Locked()
+		r.PwHash = ""
 	}
 	if changed {
 		s.dirMu.Lock()
@@ -589,7 +655,7 @@ func (s *server) settings(c *gin.Context) {
 		// tout le monde recharge : nouveau décor, ou nouvelle serrure (les connexions sans clé tombent)
 		s.hub.Evict(channel, mustJSON(gin.H{"type": "room", "theme": r.Theme, "locked": r.Locked()}))
 	}
-	out := gin.H{"ok": true, "theme": r.Theme, "locked": r.Locked()}
+	out := gin.H{"ok": true, "theme": r.Theme, "locked": r.Locked(), "pending": pending, "domain": r.Domain}
 	if newKey != "" {
 		out["ownerKey"] = newKey
 	}

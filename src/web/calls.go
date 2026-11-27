@@ -20,18 +20,19 @@ import (
 /* Appels de groupe, dans les lieux gardés par un mot de passe.
 
    Chacun envoie son son à chacun (maillage pair à pair, 6 personnes au plus) ;
-   la vidéo, elle, va d'une seule personne à la fois vers les autres : la scène
-   (le live) est à qui la prend quand elle est libre. Le serveur ne voit passer
+   la vidéo, elle, va de deux personnes au plus vers les autres : la scène
+   (le live, maxLive places) est à qui la prend quand une place est libre. Le serveur ne voit passer
    aucun média. Il fait trois choses :
    - il relaie la signalisation WebRTC (offres, réponses, candidats ICE) entre
      les membres de l'appel, par le WebSocket du salon : l'appel est donc
      exactement aussi privé que le salon ;
-   - il arbitre la scène : une seule personne en live par appel ;
+   - il arbitre la scène : deux personnes en live au plus par appel ;
    - il donne des identifiants TURN éphémères pour le coturn partagé avec
      BeamCam (même secret, API REST de coturn). */
 
 const (
 	maxCallers     = 6
+	maxLive        = 2        // en live en même temps : un duo, chacun envoie sa vidéo à tous (maillage, pas de serveur média)
 	maxSignalBytes = 32 << 10 // une offre SDP avec vidéo tient en ~10 Ko
 	turnTTL        = 6 * time.Hour
 )
@@ -135,9 +136,14 @@ func (s *server) onClientMessage(c *client, raw []byte) {
 	if json.Unmarshal(raw, &m) != nil {
 		return
 	}
-	if m.Type == "hello" { // le navigateur dit quel abonnement aux notifications est le sien
+	if m.Type == "hello" { // le navigateur dit quel abonnement aux notifications est le sien, et son pseudo
 		if pushTagRe.MatchString(m.Push) {
 			s.hub.setTag(c, m.Push)
+		}
+		if m.Nick != "" {
+			if nick, reason := s.cleanNickname(m.Nick); reason == "" {
+				s.hub.setPresence(c, nick)
+			}
 		}
 		return
 	}
@@ -200,11 +206,46 @@ func (h *Hub) peersLocked(channel string, except *client) []callPeer {
 }
 
 func (h *Hub) rosterJSONLocked(channel string) []byte {
-	live := ""
-	if c := h.stage[channel]; c != nil {
-		live = c.pid
+	lives := []string{}
+	for _, c := range h.stage[channel] {
+		lives = append(lives, c.pid)
 	}
-	return mustJSON(gin.H{"type": "call", "op": "roster", "peers": h.peersLocked(channel, nil), "live": live})
+	live := "" // l'ancien champ, pour les pages encore en cache : la première personne en live
+	if len(lives) > 0 {
+		live = lives[0]
+	}
+	return mustJSON(gin.H{"type": "call", "op": "roster", "peers": h.peersLocked(channel, nil), "live": live, "lives": lives})
+}
+
+func (h *Hub) onStageLocked(c *client) bool {
+	for _, o := range h.stage[c.channel] {
+		if o == c {
+			return true
+		}
+	}
+	return false
+}
+
+// leaveStageLocked : c descend de scène ; ses propositions de relais (reçues ou faites) tombent.
+func (h *Hub) leaveStageLocked(c *client) {
+	st := h.stage[c.channel]
+	for i, o := range st {
+		if o == c {
+			st = append(st[:i:i], st[i+1:]...)
+			break
+		}
+	}
+	if len(st) == 0 {
+		delete(h.stage, c.channel)
+	} else {
+		h.stage[c.channel] = st
+	}
+	delete(h.relay, c)
+	for to, from := range h.relay {
+		if from == c {
+			delete(h.relay, to)
+		}
+	}
 }
 
 // rosterLocked dit à tout le salon (pas seulement à l'appel) qui est en ligne.
@@ -280,13 +321,7 @@ func (h *Hub) callLeaveLocked(c *client) {
 		return
 	}
 	c.inCall = false
-	if h.stage[c.channel] == c {
-		delete(h.stage, c.channel) // qui raccroche descend de scène
-		delete(h.relay, c.channel)
-	}
-	if h.relay[c.channel] == c {
-		delete(h.relay, c.channel)
-	}
+	h.leaveStageLocked(c) // qui raccroche descend de scène
 	call := h.calls[c.channel]
 	delete(call, c)
 	if len(call) == 0 {
@@ -320,58 +355,61 @@ func (h *Hub) callState(c *client, muted bool) {
 	h.rosterLocked(c.channel)
 }
 
-// callLive : monter sur scène si elle est libre (sinon refusé), ou en descendre.
+// callLive : monter sur scène s'il reste une place (sinon refusé), ou en descendre.
 func (h *Hub) callLive(c *client, on bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if !c.inCall {
+	if !c.inCall || c.listen {
 		return
 	}
-	cur := h.stage[c.channel]
-	switch {
-	case on && cur == nil:
-		h.stage[c.channel] = c
-	case on && h.relay[c.channel] == c:
-		// on lui a passé la scène : il la prend, l'ancienne personne en live en descend
-		h.stage[c.channel] = c
-		delete(h.relay, c.channel)
-	case on && cur != c:
+	switch from := h.relay[c]; {
+	case on && h.onStageLocked(c):
+		return
+	case on && from != nil && h.onStageLocked(from):
+		// on lui a passé une place : il la prend, la personne qui la lui donne en descend
+		h.leaveStageLocked(from)
+		h.stage[c.channel] = append(h.stage[c.channel], c)
+		delete(h.relay, c)
+	case on && len(h.stage[c.channel]) < maxLive:
+		h.stage[c.channel] = append(h.stage[c.channel], c)
+		delete(h.relay, c)
+	case on:
 		h.sendLocked(c, callEvent("stage-busy"))
 		return
-	case !on && cur == c:
-		delete(h.stage, c.channel)
-		delete(h.relay, c.channel)
+	case h.onStageLocked(c):
+		h.leaveStageLocked(c)
 	default:
 		return
 	}
 	h.rosterLocked(c.channel)
 }
 
-// callHandoff : seule la personne en live propose la scène, à un membre de l'appel qui a un micro.
+// callHandoff : une personne en live propose sa place à un membre de l'appel qui a un micro (et n'est pas déjà en live).
 func (h *Hub) callHandoff(c *client, to string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if h.stage[c.channel] != c {
+	if !h.onStageLocked(c) {
 		return
 	}
 	for o := range h.calls[c.channel] {
-		if o.pid == to && o != c && !o.listen {
-			h.relay[c.channel] = o
+		if o.pid == to && o != c && !o.listen && !h.onStageLocked(o) {
+			h.relay[o] = c
 			h.sendLocked(o, mustJSON(gin.H{"type": "call", "op": "handoff", "from": c.pid, "nick": c.nick}))
 			return
 		}
 	}
 }
 
-// callDecline : la personne sollicitée refuse ; la personne en live garde la scène et le sait.
+// callDecline : la personne sollicitée refuse ; la personne en live garde sa place et le sait.
 func (h *Hub) callDecline(c *client) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if h.relay[c.channel] != c {
+	from := h.relay[c]
+	if from == nil {
 		return
 	}
-	delete(h.relay, c.channel)
-	if cur := h.stage[c.channel]; cur != nil {
-		h.sendLocked(cur, mustJSON(gin.H{"type": "call", "op": "handoff-declined", "nick": c.nick}))
+	delete(h.relay, c)
+	if h.onStageLocked(from) {
+		h.sendLocked(from, mustJSON(gin.H{"type": "call", "op": "handoff-declined", "nick": c.nick}))
 	}
 }

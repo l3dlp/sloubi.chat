@@ -2,8 +2,11 @@
 
 'use strict';
 
+import { mountLogin } from './login.js';
+
 /* ========== State & DOM ========== */
 const CHAN = document.body.dataset.chan || 'chante';
+const BASE = document.body.dataset.base || `/${CHAN}`; // "/" quand le lieu est ouvert sur son propre domaine
 const THEME = document.body.dataset.theme || 'taverne';
 const LOCKED = document.body.hasAttribute('data-locked'); // pas encore le mot de passe
 const API = `/api/${encodeURIComponent(CHAN)}`;
@@ -120,6 +123,7 @@ async function setNickname(raw) {
     store.set('sloubi_nickname', nickname);
     nicknameInput.value = nickname;
     addSystemMessage(first ? `Bienvenue, ${nickname}. Tu peux écrire.` : `Tu t’appelles désormais ${nickname}.`);
+    sayHello();
     nickMode();
     return true;
   } catch {
@@ -191,6 +195,15 @@ const saveSet = (k, set) => store.set(k, JSON.stringify([...set].slice(-600)));
 const mine = loadSet(MINE_KEY);
 const liked = loadSet(LIKED_KEY);
 const pendingMine = []; // ce qu'on vient d'envoyer : on le reconnaît s'il revient par le WebSocket avant la réponse
+
+// un fichier, un vocal, une vidéo envoyés (library.js) : à droite aussi
+window.addEventListener('sloubi:sent', (e) => {
+  const id = e.detail?.id;
+  if (typeof id !== 'number') return;
+  mine.add(id);
+  saveSet(MINE_KEY, mine);
+  markMine(id);
+});
 
 // la réponse arrive après la bulle : on la passe à droite
 function markMine(id) {
@@ -351,28 +364,40 @@ function humanSize(n) {
   return `${n.toFixed(n < 10 ? 1 : 0).replace('.', ',')} ${u[i]}`;
 }
 
+// images et vidéos : une vignette de 48 px de haut ; un clic l'ouvre dans la visionneuse,
+// qui parcourt ensuite (flèches, glissé) toutes les vignettes du fil, ou de la vue où l'on est
+const thumbFiles = new WeakMap(); // vignette → fichier (library.js les relit pour la visionneuse)
 function fileBlock(f) {
-  if (f.kind === 'image') {
-    const img = document.createElement('img');
-    img.className = 'file-img';
-    img.loading = 'lazy';
-    img.decoding = 'async';
-    img.src = fileURL(f, f.thumb ? '?thumb=1' : '');
-    img.alt = f.name;
+  if (f.kind === 'image' || f.kind === 'video') {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = `file-thumb file-thumb-${f.kind}`;
+    b.title = f.name;
+    b.setAttribute('aria-label', `${f.kind === 'video' ? 'Vidéo' : 'Image'} ${f.name} : agrandir`);
     // la place est réservée d'après les vraies proportions : le fil ne saute pas quand l'image arrive
-    if (f.w && f.h) img.style.setProperty('--ratio', String(f.w / f.h));
-    img.addEventListener('load', () => { if (nearBottom() || img.dataset.stick) toBottom(); }, { once: true });
-    img.addEventListener('click', () => window.dispatchEvent(new CustomEvent('sloubi:view', { detail: f })));
-    return img;
-  }
-  if (f.kind === 'video') {
-    const v = document.createElement('video');
-    v.className = 'file-video';
-    v.controls = true;
-    v.preload = 'metadata';
-    v.playsInline = true;
-    v.src = `${fileURL(f)}#t=0.1`; // la première image sert d'affiche
-    return v;
+    if (f.w && f.h) b.style.setProperty('--ratio', String(f.w / f.h));
+    if (f.kind === 'image') {
+      const img = document.createElement('img');
+      img.loading = 'lazy';
+      img.decoding = 'async';
+      img.src = fileURL(f, f.thumb ? '?thumb=1' : '');
+      img.alt = '';
+      b.appendChild(img);
+    } else {
+      const v = document.createElement('video');
+      v.preload = 'metadata';
+      v.muted = true;
+      v.playsInline = true;
+      v.src = `${fileURL(f)}#t=0.1`; // la première image sert d'affiche
+      const play = document.createElement('span');
+      play.className = 'file-play';
+      play.setAttribute('aria-hidden', 'true');
+      play.textContent = '▶';
+      b.append(v, play);
+    }
+    thumbFiles.set(b, f);
+    b.addEventListener('click', () => window.dispatchEvent(new CustomEvent('sloubi:view', { detail: { file: f, from: b } })));
+    return b;
   }
   if (f.kind === 'audio') {
     const a = document.createElement('audio');
@@ -404,7 +429,7 @@ function docCard(f) {
   a.append(ext, txt);
   return a;
 }
-window.sloubiFile = { fileBlock, docCard, fileURL, humanSize, fillText, countClick, prettyUrl }; // pour library.js
+window.sloubiFile = { fileBlock, docCard, fileURL, humanSize, fillText, countClick, prettyUrl, fileOf: (el) => thumbFiles.get(el) }; // pour library.js
 
 /* ========== Une journée, une heure ========== */
 let lastRow = null;
@@ -629,32 +654,27 @@ const counterSub = document.getElementById('counterSub');
 const scoreEl = document.getElementById('score');
 const scoreLabel = scoreEl?.querySelector('.score-label')?.textContent || '';
 const plural = (n, one, many) => `${n} ${n > 1 ? many : one}`;
-// every : un palier tous les N messages ; sub : la ligne sous le compteur ; milestone : ce qu'on dit au palier
+// every : un palier tous les N messages (la scène le fête, sans message) ; sub : la ligne sous le compteur
 const COUNTERS = {
   foret: {
     every: 10,
     sub: (n) => (n >= 10 ? `${plural(Math.floor(n / 10), 'arbre a', 'arbres ont')} pris racine` : 'la terre est prête'),
-    milestone: () => '🌳 Un arbre a pris racine.',
   },
   moulin: {
     every: 10,
     sub: (n) => plural(Math.floor(n / 10), 'sac de farine', 'sacs de farine').replace(/^0 sacs/, '0 sac'),
-    milestone: () => '🌾 La meule a rempli un sac de farine.',
   },
   cyber: {
     every: 10,
     sub: (n) => `niveau d’alerte ${Math.floor(n / 10)}`,
-    milestone: (n) => `SYS> Mise à jour du firmware v${Math.floor(n / 10)}.0. Ne débranchez rien. Surtout pas vous.`,
   },
   kawaii: {
     every: 10,
     sub: (n) => (n >= 10 ? plural(Math.floor(n / 10), 'arc-en-ciel', 'arcs-en-ciel') : 'pas encore d’arc-en-ciel'),
-    milestone: () => '🌈 Un arc-en-ciel ! Tout le monde a gagné. Même toi.',
   },
   bd: {
     every: 6, // six cases par planche
     sub: (n) => `planche ${Math.floor(n / 6) + 1}, case ${(n % 6) + 1}`,
-    milestone: (n) => `Fin de la planche ${n / 6}. La suite au prochain numéro…`,
   },
 };
 
@@ -675,7 +695,6 @@ function setMessageCount(n, live) {
   if (!live) return;
   bump();
   if (Math.floor(n / c.every) > Math.floor(before / c.every)) {
-    addSystemMessage(c.milestone(Math.floor(n / c.every) * c.every));
     window.dispatchEvent(new CustomEvent('sloubi:milestone', { detail: { count: n } }));
   }
 }
@@ -790,7 +809,7 @@ chatInput.addEventListener('keydown', (e) => {
 });
 
 copyLink?.addEventListener('click', async () => {
-  const url = `${location.origin}/${CHAN}`;
+  const url = `${location.origin}${BASE}`;
   try {
     await navigator.clipboard.writeText(url);
     addSystemMessage(`🔗 Lien copié : ${url}`);
@@ -831,6 +850,12 @@ const place = (() => {
   const linkBtn = document.getElementById('placeLink');
   const note = document.getElementById('placeNote');
   const pick = document.getElementById('themePick');
+  const pwHint = document.getElementById('placePwHint');
+  const loginBox = document.getElementById('placeLogin');
+  const account = document.getElementById('placeAccount');
+  const domain = document.getElementById('placeDomain');
+  const domainSave = document.getElementById('placeDomainSave');
+  const domainHint = document.getElementById('placeDomainHint');
   let info = null;
 
   const say = (t) => { note.textContent = t; };
@@ -844,8 +869,31 @@ const place = (() => {
     form.classList.toggle('is-owner', owner);
     pwLabel.textContent = info.locked ? 'Nouveau mot de passe' : 'Mot de passe';
     pw.placeholder = info.locked ? 'gardé tel quel' : 'aucun, lieu ouvert';
-    remove.hidden = !info.locked;
-    linkBtn.hidden = !owner;
+    remove.hidden = !(info.locked || info.pending);
+    remove.textContent = info.locked ? 'Retirer le mot de passe' : 'Annuler la demande';
+    linkBtn.hidden = !owner || !!info.signedIn; // avec un compte, c'est le compte qui ouvre les réglages
+    account.textContent = info.signedIn ? 'Mon compte' : 'Se connecter';
+    // le domaine perso : réservé aux membres, comme le mot de passe
+    if (!domainSave.dataset.state) {
+      domain.value = info.domain || '';
+      domain.disabled = !info.member && !info.domain;
+      syncDomainSave();
+    }
+    domainHint.textContent = info.domain
+      ? `Le lieu s’ouvre aussi sur https://${info.domain} (le domaine doit pointer sur sloubi.chat). Vide le champ pour le détacher.`
+      : info.member
+        ? 'Un domaine à toi ? Fais-le pointer sur sloubi.chat, écris-le ici, et le lieu s’ouvrira dessus.'
+        : 'Ton propre nom de domaine pour ce lieu : réservé aux membres, comme le mot de passe.';
+    // le mot de passe est réservé aux membres validés par l'admin : sinon, le poser est une demande
+    if (!pwSave.dataset.state) pwSave.textContent = info.member ? 'Changer' : 'Demander';
+    pwHint.textContent = info.member
+      ? 'Avec un mot de passe, celles et ceux qui l’ont peuvent aussi partager des fichiers et s’appeler, jusqu’à 6 à la fois.'
+      : info.pending
+        ? 'Ta demande est en attente : l’admin la valide, et ton mot de passe s’active tout seul. D’ici là, le lieu reste ouvert.'
+        : info.status === 'refuse'
+          ? 'Ta demande de mot de passe n’a pas été acceptée.'
+          : 'Le mot de passe (avec les fichiers, les vocaux et les appels) est réservé aux membres. Pose-le : ça envoie une demande à l’admin, qui ne le voit jamais.'
+            + (info.signedIn ? '' : ' On te demandera ton adresse e-mail, pour un code.');
   }
 
   async function refresh(force) {
@@ -870,6 +918,7 @@ const place = (() => {
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) {
+        if (r.status === 401) { askLogin(); return null; }
         say({ 403: 'Seul le créateur peut régler ce lieu.', 429: 'Doucement, réessaie dans un instant.', 400: 'Réglage refusé.' }[r.status]
           || 'Réglage impossible.');
         return null;
@@ -909,7 +958,7 @@ const place = (() => {
       return;
     }
     card.classList.add('is-done');
-    say(`Changé ✓ Le décor passe ${{ taverne: 'en taverne', foret: 'en forêt', moulin: 'au moulin' }[j.theme] || ''}…`);
+    say(`Changé ✓ Nouveau décor : ${card.querySelector('.theme-name')?.textContent || j.theme}…`);
   });
 
   const syncPwSave = () => { if (!pwSave.dataset.state) pwSave.disabled = !pw.value; };
@@ -917,9 +966,66 @@ const place = (() => {
   pw.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); if (!pwSave.disabled) pwSave.click(); } });
   form.addEventListener('submit', (e) => e.preventDefault());
 
+  function syncDomainSave() {
+    if (domainSave.dataset.state) return;
+    const v = domain.value.trim().toLowerCase();
+    domainSave.disabled = domain.disabled || v === (info?.domain || '');
+    domainSave.textContent = !v && info?.domain ? 'Détacher' : 'Changer';
+  }
+  domain.addEventListener('input', syncDomainSave);
+  domain.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); if (!domainSave.disabled) domainSave.click(); } });
+  domainSave.addEventListener('click', async () => {
+    const value = domain.value.trim();
+    const ok = await runButton(domainSave, async () => {
+      say('');
+      const r = await fetch(`${API}/settings`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ ownerKey, domain: value }),
+      }).catch(() => null);
+      if (!r) { say('Serveur indisponible.'); return false; }
+      if (r.status === 401) { askLogin(); return false; }
+      if (!r.ok) {
+        say({ 400: 'Ce nom de domaine n’est pas valable (les domaines accentués s’écrivent en xn--…).', 409: 'Ce domaine est déjà pris par un autre lieu.', 403: 'Réservé aux membres validés.' }[r.status] || 'Réglage impossible.');
+        return false;
+      }
+      await refresh(true);
+      return true;
+    }, value ? 'Changé' : 'Détaché');
+    if (!ok) syncDomainSave();
+  });
+
+  // pas connecté : la connexion par code s'ouvre sous le champ, le mot de passe tapé reste là
+  function askLogin() {
+    loginBox.hidden = false;
+    say('Pour poser un mot de passe, connecte-toi : on t’envoie un code par e-mail.');
+    mountLogin(loginBox, {
+      inputClass: 'nickname-input',
+      buttonClass: 'change-btn',
+      onDone: async () => {
+        loginBox.hidden = true;
+        await refresh(true);
+        if (pw.value) pwSave.click(); // on reprend là où on en était
+      },
+    }).focus();
+  }
+
   pwSave.addEventListener('click', async () => {
     if ([...pw.value].length < 4) { say('4 caractères minimum pour le mot de passe.'); pw.focus(); return; }
+    if (!info?.signedIn) { askLogin(); return; }
     const value = pw.value;
+    if (!info.member) { // une demande : rien ne change pour les autres, pas de rechargement
+      const ok = await runButton(pwSave, async () => {
+        const j = await post({ password: value });
+        if (!j) return false;
+        pw.value = '';
+        await refresh(true);
+        say('Demande envoyée ✓ L’admin va la regarder ; ton mot de passe s’activera tout seul.');
+        return true;
+      }, 'Envoyée');
+      if (!ok) syncPwSave();
+      return;
+    }
     const ok = await runButton(pwSave, async () => {
       // tout le monde repasse par la porte ; nous avons le cookie, on rentre directement
       const j = await postChange({ password: value }, 1900);
@@ -930,13 +1036,21 @@ const place = (() => {
   });
 
   remove.addEventListener('click', async () => {
+    if (!info?.locked) { // annuler une demande : le lieu était ouvert et le reste
+      await runButton(remove, async () => {
+        const j = await post({ removePassword: true });
+        if (j) { await refresh(true); say('Demande annulée.'); }
+        return !!j;
+      }, 'Annulée');
+      return;
+    }
     await runButton(remove, async () => {
       return !!(await postChange({ removePassword: true }, 1900));
     }, 'Retiré');
   });
 
   linkBtn.addEventListener('click', async () => {
-    const url = `${location.origin}/${CHAN}#cle=${ownerKey}`;
+    const url = `${location.origin}${BASE}#cle=${ownerKey}`;
     try {
       await navigator.clipboard.writeText(url);
       say('Lien copié. Garde-le pour toi : il ouvre les réglages sur un autre appareil.');
@@ -969,68 +1083,6 @@ installButton.addEventListener('click', async () => {
 function isIOS() { return /iPhone|iPad|iPod/.test(navigator.userAgent) && !window.MSStream; }
 function isInStandaloneMode() { return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone; }
 if (isInStandaloneMode()) { pwaInstallSection.hidden = true; }
-
-/* ========== Ambient messages (fun only) ========== */
-const ambientMessages = {
-  taverne: [
-    "🍺 On entend le bruit des chopes qui s'entrechoquent...",
-    "🔥 Le feu crépite dans la cheminée...",
-    "🎵 Un ménestrel joue une ballade au loin...",
-    "👥 Des voyageurs discutent à voix basse...",
-    "🌙 La nuit est tombée sur la Bretagne...",
-    "⚔️ Un chevalier entre dans la taverne...",
-    "🐀 Un rat traverse furtivement la pièce..."
-  ],
-  foret: [
-    "🍄 Sous la mousse, les racines se passent des nouvelles...",
-    "🐝 Une abeille butine la haie de petits fruits...",
-    "🌿 Le vent fait bruisser la canopée...",
-    "🍂 Une feuille tombe et nourrit la terre...",
-    "🦉 Une chouette observe depuis le vieux chêne...",
-    "💧 La rosée perle sur les fougères...",
-    "🌱 Une graine oubliée commence à germer..."
-  ],
-  moulin: [
-    "🌊 L'eau clapote contre la roue...",
-    "🐟 Une truite saute dans le bief...",
-    "🪵 La roue grince, puis reprend son rythme...",
-    "🦆 Un canard descend le courant sans se presser...",
-    "🌾 Le meunier secoue un sac de farine...",
-    "🐸 Une grenouille s'installe sur une pierre...",
-    "🍃 Le saule laisse traîner ses branches dans l'eau..."
-  ],
-  cyber: [
-    "SYS> Je ne lis pas vos messages. (Je mens.)",
-    "SYS> Votre curseur a bougé. Je l'ai noté quelque part.",
-    "SYS> Bande VHS en fin de course. Rembobinez par politesse.",
-    "SYS> Quelqu'un a encore collé un tract sur mon écran.",
-    "SYS> Mot de passe administrateur : ********. Ah, ça s'affiche pas ?",
-    "SYS> Ce salon n'existe pas. Vous non plus, d'ailleurs.",
-    "SYS> Photocopieuse en surchauffe. Continuez, ça lui fait du bien."
-  ],
-  kawaii: [
-    "Le bouton envoyer te fait coucou. Fais-lui coucou aussi.",
-    "Un nuage est passé. Il a dit bonjour. C'était un bon nuage.",
-    "Petit rappel : tu fais de ton mieux, et c'est très bien.",
-    "Le compteur a fait une sieste. Il va mieux.",
-    "Une étoile est tombée. On l'a rattrapée, elle va bien.",
-    "Le bouton envoyer voudrait qu'on lui écrive quelque chose. N'importe quoi."
-  ],
-  bd: [
-    "Pendant ce temps, à l'autre bout de la ville…",
-    "Plus tard…",
-    "Note de l'auteur : cette case n'a pas été dessinée, faute de budget.",
-    "Soudain !",
-    "Le lendemain, à la même heure…",
-    "Note de l'éditeur : les bulles sont garanties sans fautes. Enfin, presque.",
-    "Pendant ce temps, le dessinateur cherche une gomme."
-  ],
-}[THEME] || [];
-function scheduleAmbient() {
-  if (ambientMessages.length && Math.random() > 0.3) addSystemMessage(ambientMessages[Math.floor(Math.random() * ambientMessages.length)]);
-  setTimeout(scheduleAmbient, 15000 + Math.random() * 25000);
-}
-if (!LOCKED) setTimeout(scheduleAmbient, 10000);
 
 /* ========== Post-it (contenu partagé, position et état propres au visiteur) ========== */
 const postit = (() => {
@@ -1186,7 +1238,7 @@ function connectWebSocket() {
   ws = new WebSocket(`${proto}//${location.host}/ws/${encodeURIComponent(CHAN)}`);
 
   ws.onopen = () => {
-    addSystemMessage(`Connecté à /${CHAN}.`);
+    sayHello();
     window.dispatchEvent(new CustomEvent('sloubi:ws-open'));
     if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
   };
@@ -1195,6 +1247,7 @@ function connectWebSocket() {
     let data;
     try { data = JSON.parse(ev.data); } catch (e) { console.warn('WS parse error', e); return; }
     if (data.type === 'postit') { postit.receive(data); return; }
+    if (data.type === 'presence') { onPresence(data); return; }
     if (data.type === 'call') { window.dispatchEvent(new CustomEvent('sloubi:call', { detail: data })); return; } // call.js
     // le créateur a changé le décor ou la serrure : le serveur nous déconnecte, on recharge
     if (data.type === 'room') { leaving = true; setTimeout(() => location.reload(), reloadDelay); return; }
@@ -1217,9 +1270,23 @@ function connectWebSocket() {
     ws = null;
     window.dispatchEvent(new CustomEvent('sloubi:ws-closed'));
     if (leaving) return; // fermeture voulue : on quitte la page
-    addSystemMessage('Déconnecté. Reconnexion…');
     reconnectTimer = setTimeout(reconnect, 2000 + Math.random() * 2000);
   };
+}
+
+/* ========== Qui entre, qui sort (presence.go) : les seuls messages du salon qui ne sont pas des messages ========== */
+function sayHello() {
+  if (ws && ws.readyState === WebSocket.OPEN && hasNick()) ws.send(JSON.stringify({ type: 'hello', nick: nickname }));
+}
+let presenceSeen = false; // « déjà là » : une fois par page, pas à chaque reconnexion
+function onPresence(d) {
+  if (d.op === 'in' && d.nick) addSystemMessage(`→ ${d.nick} arrive.`);
+  else if (d.op === 'out' && d.nick) addSystemMessage(`← ${d.nick} s’en va.`);
+  else if (d.op === 'here' && !presenceSeen) {
+    presenceSeen = true;
+    const n = (d.nicks || []).filter(Boolean);
+    if (n.length) addSystemMessage(`Déjà là : ${n.length > 1 ? `${n.slice(0, -1).join(', ')} et ${n.at(-1)}` : n[0]}.`);
+  }
 }
 
 // call.js parle au serveur par ce même WebSocket (signalisation des appels)

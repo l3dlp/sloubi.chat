@@ -68,6 +68,8 @@ body.room {
 }
 
 body.fx-ready .smoke { opacity: 1; }
+/* le fond des téléphones (shader-bg.js) : dessiné petit, agrandi en douceur */
+body.fx-light .smoke { image-rendering: auto; }
 
 /* un voile qui assombrit le centre-bas pour la lisibilité, et la vignette de la taverne */
 .veil {
@@ -949,7 +951,28 @@ body.on-stage .chat-messages {
     background: #000;
 }
 
-.stage.mirror .stage-video { transform: scaleX(-1); }
+.stage-tile.mirror .stage-video { transform: scaleX(-1); }
+
+/* une ou deux vignettes : côte à côte, ou l'une sur l'autre quand l'écran est étroit */
+.stage-tiles { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 2px; width: 100%; height: 100%; }
+.stage-tile { position: relative; min-width: 0; min-height: 0; background: #000; }
+.stage-name {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    padding: 2px 9px;
+    border-radius: 999px;
+    background: rgba(0, 0, 0, 0.55);
+    color: #fff;
+    font-size: 0.85rem;
+    pointer-events: none;
+}
+.stage:not(.duo) .stage-name { display: none; } /* seul en live : la barre du bas dit déjà qui c'est */
+
+@media (max-aspect-ratio: 1/1) {
+    .stage.duo { aspect-ratio: 4 / 5; }
+    .stage.duo .stage-tiles { grid-auto-flow: row; grid-auto-rows: minmax(0, 1fr); grid-auto-columns: auto; }
+}
 
 .stage-bar {
     position: absolute;
@@ -1215,6 +1238,21 @@ body.needs-nick .whisper-input::placeholder { color: var(--gold); opacity: 0.8; 
 
 .place-link:hover { color: var(--gold); }
 .place-note { min-height: 1.3em; font-size: 0.92rem; font-style: italic; color: var(--parchment-dim); overflow-wrap: anywhere; }
+
+/* le lien vers /_/compte, et la connexion par code e-mail (login.js) dans les options */
+.place-account { justify-self: start; font-size: 0.95rem; color: var(--parchment-dim); text-underline-offset: 3px; }
+.place-account:hover { color: var(--gold); }
+.place-login { padding: 12px; border: 1px solid var(--hairline); border-radius: 12px; background: rgba(0, 0, 0, 0.18); }
+.otp, .otp-step { display: grid; gap: 8px; }
+.otp-row { display: flex; gap: 8px; align-items: center; min-width: 0; }
+.otp-row .otp-input { flex: 1 1 0; min-width: 0; width: 0; font-size: 16px; } /* 16 px : iOS ne zoome pas */
+.otp-code { letter-spacing: 0.3em; font-variant-numeric: tabular-nums; }
+.otp-sent { font-size: 0.9rem; color: var(--parchment-dim); overflow-wrap: anywhere; }
+.otp-sent b { color: var(--parchment); font-weight: 600; }
+.otp-link { justify-self: start; padding: 0; border: 0; background: none; font: inherit; font-size: 0.88rem; color: var(--parchment-dim); text-decoration: underline; cursor: pointer; }
+.otp-note { min-height: 1.2em; font-size: 0.9rem; color: var(--parchment); }
+.otp-note:empty { display: none; }
+.otp-note.is-bad { color: var(--parchment); font-weight: 600; }
 
 .install-button:disabled { opacity: 0.5; cursor: wait; }
 
@@ -1515,19 +1553,26 @@ body[data-theme] .system-message {
 }
 
 /* ---------- Les fichiers dans le fil ---------- */
-.file-img {
+/* images et vidéos : une vignette de 48 px de haut, le clic ouvre la visionneuse */
+.file-thumb {
+    position: relative;
     display: block;
-    /* au plus 420 px de large et 340 px de haut, sans jamais déformer */
-    width: min(100%, 420px, calc(340px * var(--ratio, 1.5)));
-    height: auto;
-    aspect-ratio: var(--ratio, auto);
+    height: 48px;
+    aspect-ratio: var(--ratio, 4 / 3);
+    max-width: min(100%, 240px);
     margin-top: 4px;
-    border-radius: 12px;
+    padding: 0;
+    border: 0;
+    border-radius: 8px;
+    overflow: hidden;
+    background: rgba(0, 0, 0, 0.18);
     cursor: zoom-in;
-    background: rgba(0, 0, 0, 0.15);
-    object-fit: cover;
 }
-.file-video { display: block; width: min(420px, 100%); max-height: 360px; margin-top: 4px; border-radius: 12px; background: #000; }
+.file-thumb-video { aspect-ratio: var(--ratio, 16 / 9); background: #000; }
+.file-thumb img, .file-thumb video { display: block; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+.file-thumb:hover { filter: brightness(1.08); }
+.file-thumb:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+.file-play { position: absolute; inset: 0; display: grid; place-items: center; color: #fff; font-size: 1rem; text-shadow: 0 1px 6px rgba(0, 0, 0, 0.7); }
 .file-audio { display: block; width: 300px; max-width: 100%; margin-top: 6px; } /* largeur fixe : en %, la bulle (ajustée à son contenu) l'écrasait */
 
 .file-doc {
@@ -1546,6 +1591,9 @@ body[data-theme] .system-message {
 .file-doc .file-ext { flex: none; display: grid; place-items: center; width: 42px; height: 50px; border-radius: 6px; background: var(--gold); color: var(--soot); font: 600 0.7rem/1 var(--ui); text-transform: uppercase; }
 .file-doc .file-name { display: block; font-weight: 600; overflow-wrap: anywhere; }
 .file-doc .file-size { display: block; font-size: 0.82em; opacity: 0.7; }
+/* dans le fil, un document tient aussi sur 48 px */
+.msg-row .file-doc { padding: 6px 10px; gap: 10px; }
+.msg-row .file-doc .file-ext { width: 30px; height: 36px; font-size: 0.62rem; }
 
 /* ---------- La saisie ---------- */
 .room-bottom { grid-template-columns: minmax(0, 1fr); padding: 10px 12px 12px; border-top: 1px solid var(--thread-line); } /* une colonne qui ne grandit pas avec son contenu */
@@ -1812,7 +1860,7 @@ body.room {
 }
 
 .rec-title { font: 600 1.3rem/1.2 var(--ui); }
-.rec-stage { width: 100%; display: grid; place-items: center; }
+.rec-stage { position: relative; width: 100%; display: grid; place-items: center; }
 .rec-live { width: 100%; max-height: 46vh; border-radius: 16px; background: #000; object-fit: cover; }
 .rec-live.mirror { transform: scaleX(-1); }
 .rec-meter { width: 100%; height: 90px; }
@@ -2059,3 +2107,63 @@ body.room {
         scrollbar-color: var(--sb-thumb) var(--sb-track);
     }
 }
+
+/* enregistrer son écran : pendant l'enregistrement, la fenêtre se réduit à une pastille en bas,
+   pour qu'on puisse montrer la page elle-même sans qu'elle la cache */
+.rec-menu small { font-weight: 400; font-size: 0.82em; color: var(--parchment-faint); }
+.recorder[data-kind="screen"][data-state="recording"] { place-items: end center; background: none; backdrop-filter: none; -webkit-backdrop-filter: none; pointer-events: none; }
+.recorder[data-kind="screen"][data-state="recording"] .recorder-card {
+    width: auto;
+    grid-auto-flow: column;
+    align-items: center;
+    gap: 14px;
+    padding: 8px 10px 8px 18px;
+    border-radius: 999px;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+    pointer-events: auto;
+}
+.recorder[data-kind="screen"][data-state="recording"] :is(.rec-title, .rec-stage, .rec-note, #recCancel) { display: none; }
+.recorder[data-kind="screen"][data-state="recording"] .rec-time { font-size: 1.2rem; }
+.recorder[data-kind="screen"][data-state="recording"] .rec-big { min-height: 44px; padding: 0 18px; font-size: 1rem; }
+.recorder[data-kind="screen"][data-state="recording"] .rec-time::before { content: '● '; color: #e5484d; }
+
+/* ---------- Sa caméra (camfx.js) : changer de caméra, régler son image ---------- */
+.cam-tools { position: absolute; top: 8px; right: 8px; z-index: 2; display: flex; gap: 6px; }
+.cam-btn {
+    display: grid;
+    place-items: center;
+    width: 38px;
+    height: 38px;
+    padding: 0;
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.5);
+    color: #fff;
+    cursor: pointer;
+    -webkit-backdrop-filter: blur(6px);
+    backdrop-filter: blur(6px);
+}
+.cam-btn svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.cam-btn[aria-expanded="true"] { background: rgba(255, 255, 255, 0.9); color: #111; }
+.cam-btn:disabled { opacity: 0.45; cursor: wait; }
+.cam-panel {
+    position: absolute;
+    top: 52px;
+    right: 8px;
+    z-index: 2;
+    display: grid;
+    gap: 8px;
+    width: min(260px, calc(100% - 16px));
+    padding: 12px 14px;
+    border-radius: 14px;
+    background: rgba(12, 10, 8, 0.82);
+    color: #fff;
+    font: 400 0.88rem/1.2 var(--ui);
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
+}
+.cam-row { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; align-items: center; }
+.cam-row output { font-variant-numeric: tabular-nums; opacity: 0.75; }
+.cam-row input { grid-column: 1 / -1; width: 100%; accent-color: var(--gold, #f2c46d); }
+.cam-reset { justify-self: end; padding: 4px 10px; border: 1px solid rgba(255, 255, 255, 0.3); border-radius: 999px; background: none; color: #fff; font: inherit; cursor: pointer; }
+.stage-tile .cam-panel { max-height: calc(100% - 60px); overflow: auto; }

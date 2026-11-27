@@ -40,10 +40,10 @@ import (
    navigateur (pas de HTML, pas de SVG en ligne). */
 
 const (
-	roomQuota    = 10 << 30 // 10 Go par salon
-	diskReserve  = 5 << 30  // le disque du serveur garde toujours 5 Go libres
-	thumbMax     = 640      // côté le plus long d'une miniature
-	thumbMaxPix  = 50e6     // au-delà de 50 Mpx, pas de miniature (mémoire)
+	roomQuota    = 1001 << 30 // 1001 Go par salon : le disque (diskReserve) arrête avant, en attendant le CDN
+	diskReserve  = 5 << 30    // le disque du serveur garde toujours 5 Go libres
+	thumbMax     = 640        // côté le plus long d'une miniature
+	thumbMaxPix  = 50e6       // au-delà de 50 Mpx, pas de miniature (mémoire)
 	maxNameRunes = 120
 )
 

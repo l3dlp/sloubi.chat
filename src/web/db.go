@@ -143,6 +143,21 @@ func (s *Store) migrate() error {
 		tag TEXT,
 		created_at TEXT NOT NULL,
 		PRIMARY KEY (endpoint, channel)
+	);
+	CREATE TABLE IF NOT EXISTS users (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		email TEXT NOT NULL UNIQUE,
+		role TEXT NOT NULL,
+		status TEXT NOT NULL,
+		created_at TEXT NOT NULL,
+		requested_at TEXT
+	);
+	CREATE TABLE IF NOT EXISTS otp_codes (
+		email TEXT PRIMARY KEY,
+		code_hash TEXT NOT NULL,
+		issued_at TEXT NOT NULL,
+		expires_at TEXT NOT NULL,
+		attempts INTEGER NOT NULL DEFAULT 0
 	);`); err != nil {
 		return err
 	}
@@ -157,10 +172,14 @@ func (s *Store) migrate() error {
 	}
 
 	// v3 : thème, créateur et mot de passe de chaque lieu
+	// v5 : le compte propriétaire, et le mot de passe qui attend la validation de l'admin
 	for col, def := range map[string]string{
 		"theme":      `TEXT NOT NULL DEFAULT '` + DefaultTheme + `'`,
 		"owner_hash": "TEXT",
 		"pw_hash":    "TEXT",
+		"owner_user": "INTEGER",
+		"pw_pending": "TEXT",
+		"domain":     "TEXT", // v6 : le domaine perso du lieu (domains.go)
 	} {
 		ok, err := s.hasColumn("channels", col)
 		if err != nil {
@@ -189,6 +208,7 @@ func (s *Store) migrate() error {
 	CREATE INDEX IF NOT EXISTS idx_messages_ts ON messages(ts);
 	CREATE INDEX IF NOT EXISTS idx_messages_channel_id ON messages(channel, id);
 	CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_channel_sloubi ON messages(channel, sloubi_number);
+	CREATE UNIQUE INDEX IF NOT EXISTS idx_channels_domain ON channels(domain);
 	INSERT OR IGNORE INTO channels (name, created_at, last_message_at)
 		SELECT channel, MIN(ts), MAX(ts) FROM messages GROUP BY channel;`)
 	if err != nil {

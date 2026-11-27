@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/ecdh"
@@ -270,14 +271,51 @@ func testServer(t *testing.T) *gin.Engine {
 	return newTestServer(t).router()
 }
 
+const testAdmin = "admin@exemple.fr"
+
 func newTestServer(t *testing.T) *server {
 	t.Helper()
-	return &server{
+	s := &server{
 		store: testStore(t), hub: NewHub(), forbidden: testForbidden(t),
 		postLimit: NewLimiter(100, 100, 0, 0), postitLimit: NewLimiter(100, 100, 0, 0),
 		checkLimit: NewLimiter(100, 100, 0, 0), wsLimit: NewLimiter(100, 100, 0, 0),
 		createLimit: NewLimiter(100, 100, 0, 0), lockLimit: NewLimiter(100, 100, 0, 0), reactLimit: NewLimiter(100, 100, 0, 0), uploadLimit: NewLimiter(100, 100, 0, 0),
+		codeLimit: NewLimiter(100, 100, 0, 0), mail: testMailer{},
 	}
+	if err := s.store.ensureAdmin(testAdmin); err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+// testMailer garde le dernier code envoyé à chaque adresse, au lieu de l'envoyer.
+type testMailer struct{}
+
+var sentCodes sync.Map
+
+func (testMailer) SendCode(_ context.Context, to, code string) error {
+	sentCodes.Store(to, code)
+	return nil
+}
+
+// login : la vraie connexion par code, renvoie le cookie de session.
+func login(t *testing.T, r http.Handler, email string) []*http.Cookie {
+	t.Helper()
+	if w := do(r, "POST", "/api/_compte/code", `{"email":"`+email+`"}`); w.Code != 200 {
+		t.Fatalf("code pour %s = %d %s", email, w.Code, w.Body.String())
+	}
+	code, _ := sentCodes.Load(email)
+	w := do(r, "POST", "/api/_compte/verify", `{"email":"`+email+`","code":"`+code.(string)+`"}`)
+	if w.Code != 200 {
+		t.Fatalf("verify %s = %d %s", email, w.Code, w.Body.String())
+	}
+	return w.Result().Cookies()
+}
+
+// adminCookies : seul l'admin (ou un membre validé) pose un mot de passe.
+func adminCookies(t *testing.T, r http.Handler) []*http.Cookie {
+	t.Helper()
+	return login(t, r, testAdmin)
 }
 
 func do(r http.Handler, method, path, body string) *httptest.ResponseRecorder {
@@ -593,11 +631,11 @@ func TestRoomOwnerThemeAndPassword(t *testing.T) {
 	}
 
 	// mot de passe : le créateur reçoit son cookie, les autres trouvent porte close
-	w = do(r, "POST", "/api/clairiere/settings", `{"ownerKey":"`+key+`","password":"ab"}`)
+	w = req(r, "POST", "/api/clairiere/settings", `{"ownerKey":"`+key+`","password":"ab"}`, adminCookies(t, r))
 	if w.Code != 400 {
 		t.Fatalf("mot de passe trop court = %d", w.Code)
 	}
-	w = do(r, "POST", "/api/clairiere/settings", `{"ownerKey":"`+key+`","password":"sésame ouvre-toi"}`)
+	w = req(r, "POST", "/api/clairiere/settings", `{"ownerKey":"`+key+`","password":"sésame ouvre-toi"}`, adminCookies(t, r))
 	owner := w.Result().Cookies()
 	if w.Code != 200 || len(owner) != 1 || !owner[0].HttpOnly {
 		t.Fatalf("verrou = %d, cookies %v", w.Code, owner)
@@ -648,11 +686,11 @@ func TestRoomOwnerThemeAndPassword(t *testing.T) {
 	}
 
 	// changer le mot de passe invalide les anciens cookies ; le retirer rouvre le lieu
-	do(r, "POST", "/api/clairiere/settings", `{"ownerKey":"`+key+`","password":"autre chose"}`)
+	req(r, "POST", "/api/clairiere/settings", `{"ownerKey":"`+key+`","password":"autre chose"}`, adminCookies(t, r))
 	if w := req(r, "POST", "/api/clairiere/messages", `{"nickname":"Testeur","message":"encore"}`, visitor); w.Code != 403 {
 		t.Errorf("ancien cookie toujours valable = %d", w.Code)
 	}
-	do(r, "POST", "/api/clairiere/settings", `{"ownerKey":"`+key+`","removePassword":true}`)
+	req(r, "POST", "/api/clairiere/settings", `{"ownerKey":"`+key+`","removePassword":true}`, adminCookies(t, r))
 	if w := do(r, "POST", "/api/clairiere/messages", `{"nickname":"Testeur","message":"ouvert"}`); w.Code != 202 {
 		t.Errorf("lieu rouvert = %d", w.Code)
 	}
@@ -677,7 +715,7 @@ func TestRoomOwnerThemeAndPassword(t *testing.T) {
 func TestDirectoryHidesLockedCounts(t *testing.T) {
 	r := testServer(t)
 	key := jsonField(t, do(r, "POST", "/api/secret/messages", `{"nickname":"Testeur","clientId":"a","message":"sloubi 1"}`), "ownerKey")
-	do(r, "POST", "/api/secret/settings", `{"ownerKey":"`+key+`","password":"motdepasse"}`)
+	req(r, "POST", "/api/secret/settings", `{"ownerKey":"`+key+`","password":"motdepasse"}`, adminCookies(t, r))
 	body := do(r, "GET", "/_/", "").Body.String()
 	if !strings.Contains(body, `href="/secret"`) || !strings.Contains(body, "🔒") || strings.Contains(body, "<strong>1</strong> sloubis") {
 		t.Fatalf("annuaire : %s", body)
@@ -692,7 +730,7 @@ func TestTurnCredentials(t *testing.T) {
 	if w := do(r, "GET", "/api/ouvert/turn", ""); w.Code != 403 {
 		t.Fatalf("TURN sans mot de passe = %d", w.Code)
 	}
-	owner := do(r, "POST", "/api/ouvert/settings", `{"ownerKey":"`+key+`","password":"motdepasse"}`).Result().Cookies()
+	owner := req(r, "POST", "/api/ouvert/settings", `{"ownerKey":"`+key+`","password":"motdepasse"}`, adminCookies(t, r)).Result().Cookies()
 	if w := do(r, "GET", "/api/ouvert/turn", ""); w.Code != 403 {
 		t.Fatalf("TURN sans cookie = %d", w.Code)
 	}
@@ -780,7 +818,7 @@ func TestCallSignaling(t *testing.T) {
 	r := s.router()
 
 	key := jsonField(t, do(r, "POST", "/api/veillee/messages", `{"nickname":"Testeur","message":"hop"}`), "ownerKey")
-	pass := do(r, "POST", "/api/veillee/settings", `{"ownerKey":"`+key+`","password":"motdepasse"}`).Result().Cookies()
+	pass := req(r, "POST", "/api/veillee/settings", `{"ownerKey":"`+key+`","password":"motdepasse"}`, adminCookies(t, r)).Result().Cookies()
 
 	a := dialRoom(t, srv, "veillee", pass)
 	b := dialRoom(t, srv, "veillee", pass)
@@ -839,7 +877,7 @@ func TestCallLimits(t *testing.T) {
 
 	// six au plus
 	key := jsonField(t, do(r, "POST", "/api/table/messages", `{"nickname":"Testeur","message":"hop"}`), "ownerKey")
-	pass := do(r, "POST", "/api/table/settings", `{"ownerKey":"`+key+`","password":"motdepasse"}`).Result().Cookies()
+	pass := req(r, "POST", "/api/table/settings", `{"ownerKey":"`+key+`","password":"motdepasse"}`, adminCookies(t, r)).Result().Cookies()
 	for i := 0; i < maxCallers; i++ {
 		c := dialRoom(t, srv, "table", pass)
 		c.send(`{"type":"call","op":"join","nick":"Chevalier"}`)
@@ -856,49 +894,62 @@ func TestCallLimits(t *testing.T) {
 	}
 }
 
+// livesOf : qui est en live d'après un roster, dans l'ordre (« a,b »).
+func livesOf(m map[string]any) string {
+	var ids []string
+	l, _ := m["lives"].([]any)
+	for _, x := range l {
+		ids = append(ids, x.(string))
+	}
+	return strings.Join(ids, ",")
+}
+
 func TestCallStage(t *testing.T) {
 	s := newTestServer(t)
 	srv := httptest.NewServer(s.router())
 	defer srv.Close()
 	r := s.router()
 	key := jsonField(t, do(r, "POST", "/api/scene/messages", `{"nickname":"Testeur","message":"hop"}`), "ownerKey")
-	pass := do(r, "POST", "/api/scene/settings", `{"ownerKey":"`+key+`","password":"motdepasse"}`).Result().Cookies()
+	pass := req(r, "POST", "/api/scene/settings", `{"ownerKey":"`+key+`","password":"motdepasse"}`, adminCookies(t, r)).Result().Cookies()
 
-	a := dialRoom(t, srv, "scene", pass)
-	b := dialRoom(t, srv, "scene", pass)
 	watcher := dialRoom(t, srv, "scene", pass)
-
 	watcher.send(`{"type":"call","op":"live","on":true}`) // pas dans l'appel : ignoré
-	a.send(`{"type":"call","op":"join","nick":"Arthur"}`)
-	ja := a.expect("joined")
-	b.send(`{"type":"call","op":"join","nick":"Bohort"}`)
-	b.expect("joined")
-
-	a.send(`{"type":"call","op":"live","on":true}`)
-	waitLive := func(want string) {
+	join := func(nick string) (*wsClient, string) {
+		c := dialRoom(t, srv, "scene", pass)
+		c.send(`{"type":"call","op":"join","nick":"` + nick + `"}`)
+		return c, c.expect("joined")["you"].(string)
+	}
+	a, aid := join("Arthur")
+	b, bid := join("Bohort")
+	d, did := join("Dagonet")
+	waitLives := func(want string) {
 		t.Helper()
-		for i := 0; i < 10; i++ {
-			if watcher.expect("roster")["live"] == want {
+		for i := 0; i < 12; i++ {
+			m := watcher.expect("roster")
+			if livesOf(m) == want {
+				if first, _, _ := strings.Cut(want, ","); m["live"] != first { // l'ancien champ : la première personne
+					t.Fatalf("live = %v, attendu %q", m["live"], first)
+				}
 				return
 			}
 		}
-		t.Fatalf("live attendu %q", want)
+		t.Fatalf("en live attendu %q", want)
 	}
-	waitLive(ja["you"].(string))
 
-	b.send(`{"type":"call","op":"live","on":true}`) // la scène est prise
-	b.expect("stage-busy")
-	b.send(`{"type":"call","op":"live","on":false}`) // b ne peut pas faire descendre a
+	a.send(`{"type":"call","op":"live","on":true}`)
+	waitLives(aid)
+	b.send(`{"type":"call","op":"live","on":true}`) // une deuxième place : le duo
+	waitLives(aid + "," + bid)
+	d.send(`{"type":"call","op":"live","on":true}`) // pas de troisième
+	d.expect("stage-busy")
+	d.send(`{"type":"call","op":"live","on":false}`) // d ne fait descendre personne
 
-	a.send(`{"type":"call","op":"leave"}`) // qui raccroche libère la scène
-	waitLive("")
-	b.send(`{"type":"call","op":"live","on":true}`)
-	for i := 0; i < 10; i++ {
-		if r := b.expect("roster"); r["live"] != "" {
-			return
-		}
-	}
-	t.Fatal("scène libre refusée")
+	a.send(`{"type":"call","op":"leave"}`) // qui raccroche libère sa place
+	waitLives(bid)
+	d.send(`{"type":"call","op":"live","on":true}`)
+	waitLives(bid + "," + did)
+	b.send(`{"type":"call","op":"live","on":false}`)
+	waitLives(did)
 }
 
 // decryptPush fait ce que fait le navigateur (RFC 8291), pour vérifier encryptPush.
@@ -1021,7 +1072,7 @@ func TestCallStartPushes(t *testing.T) {
 	r := s.router()
 
 	key := jsonField(t, do(r, "POST", "/api/veillee/messages", `{"nickname":"Testeur","message":"hop"}`), "ownerKey")
-	pass := do(r, "POST", "/api/veillee/settings", `{"ownerKey":"`+key+`","password":"motdepasse"}`).Result().Cookies()
+	pass := req(r, "POST", "/api/veillee/settings", `{"ownerKey":"`+key+`","password":"motdepasse"}`, adminCookies(t, r)).Result().Cookies()
 
 	type browser struct {
 		ua   *ecdh.PrivateKey
@@ -1094,7 +1145,7 @@ func TestSpectatorAndNickRequired(t *testing.T) {
 	defer srv.Close()
 	r := s.router()
 	key := jsonField(t, do(r, "POST", "/api/regard/messages", `{"nickname":"Testeur","message":"hop"}`), "ownerKey")
-	pass := do(r, "POST", "/api/regard/settings", `{"ownerKey":"`+key+`","password":"motdepasse"}`).Result().Cookies()
+	pass := req(r, "POST", "/api/regard/settings", `{"ownerKey":"`+key+`","password":"motdepasse"}`, adminCookies(t, r)).Result().Cookies()
 
 	a := dialRoom(t, srv, "regard", pass)
 	a.send(`{"type":"call","op":"join","nick":"Anonyme"}`)
@@ -1116,7 +1167,7 @@ func TestCallHandoff(t *testing.T) {
 	defer srv.Close()
 	r := s.router()
 	key := jsonField(t, do(r, "POST", "/api/relais/messages", `{"nickname":"Testeur","message":"hop"}`), "ownerKey")
-	pass := do(r, "POST", "/api/relais/settings", `{"ownerKey":"`+key+`","password":"motdepasse"}`).Result().Cookies()
+	pass := req(r, "POST", "/api/relais/settings", `{"ownerKey":"`+key+`","password":"motdepasse"}`, adminCookies(t, r)).Result().Cookies()
 
 	join := func(nick string, listen bool) (*wsClient, string) {
 		c := dialRoom(t, srv, "relais", pass)
@@ -1126,36 +1177,41 @@ func TestCallHandoff(t *testing.T) {
 	a, aid := join("Arthur", false)
 	b, bid := join("Bohort", false)
 	c, cid := join("Calogrenant", true) // spectateur
-	waitLive := func(w *wsClient, want string) {
+	d, did := join("Dagonet", false)
+	waitLives := func(want string) {
 		t.Helper()
-		for i := 0; i < 12; i++ {
-			if w.expect("roster")["live"] == want {
+		for i := 0; i < 14; i++ {
+			if livesOf(c.expect("roster")) == want {
 				return
 			}
 		}
-		t.Fatalf("live attendu %q", want)
+		t.Fatalf("en live attendu %q", want)
 	}
 
 	b.send(`{"type":"call","op":"handoff","to":"` + aid + `"}`) // pas en live : ignoré
+	c.send(`{"type":"call","op":"live","on":true}`)             // un spectateur ne monte pas sur scène
 	a.send(`{"type":"call","op":"live","on":true}`)
-	waitLive(c, aid)
+	waitLives(aid)
+	d.send(`{"type":"call","op":"live","on":true}`)
+	waitLives(aid + "," + did) // la scène est pleine
 
 	a.send(`{"type":"call","op":"handoff","to":"` + cid + `"}`) // un spectateur n'a pas de micro : ignoré
+	a.send(`{"type":"call","op":"handoff","to":"` + did + `"}`) // déjà en live : ignoré
 	a.send(`{"type":"call","op":"handoff","to":"` + bid + `"}`)
 	if h := b.expect("handoff"); h["from"] != aid || h["nick"] != "Arthur" {
 		t.Fatalf("handoff = %v", h)
 	}
 	b.send(`{"type":"call","op":"handoff-decline"}`)
-	if d := a.expect("handoff-declined"); d["nick"] != "Bohort" {
-		t.Fatalf("refus = %v", d)
+	if m := a.expect("handoff-declined"); m["nick"] != "Bohort" {
+		t.Fatalf("refus = %v", m)
 	}
-	b.send(`{"type":"call","op":"live","on":true}`) // refusé : la scène reste à Arthur
+	b.send(`{"type":"call","op":"live","on":true}`) // refusé, et la scène est pleine
 	b.expect("stage-busy")
 
 	a.send(`{"type":"call","op":"handoff","to":"` + bid + `"}`)
 	b.expect("handoff")
-	b.send(`{"type":"call","op":"live","on":true}`) // accepté : Bohort prend la scène
-	waitLive(c, bid)
+	b.send(`{"type":"call","op":"live","on":true}`) // accepté : Bohort prend la place d'Arthur, Dagonet reste
+	waitLives(did + "," + bid)
 }
 
 func TestThemesComplete(t *testing.T) {
@@ -1165,7 +1221,7 @@ func TestThemesComplete(t *testing.T) {
 	r := testServer(t)
 	for _, id := range themeOrder {
 		th := themes[id]
-		if th.ID != id || th.Name == "" || th.CounterLabel == "" || th.Welcome == "" || th.Color == "" {
+		if th.ID != id || th.Name == "" || th.CounterLabel == "" || th.Color == "" {
 			t.Errorf("thème %q incomplet : %+v", id, th)
 		}
 		if _, err := os.Stat("assets/" + th.FX); err != nil {
@@ -1293,7 +1349,7 @@ func TestUploads(t *testing.T) {
 
 	do(r, "POST", "/api/ouvert/messages", `{"nickname":"Arthur","message":"hop"}`)
 	key := jsonField(t, do(r, "POST", "/api/coffre/messages", `{"nickname":"Arthur","message":"hop"}`), "ownerKey")
-	pass := do(r, "POST", "/api/coffre/settings", `{"ownerKey":"`+key+`","password":"motdepasse"}`).Result().Cookies()
+	pass := req(r, "POST", "/api/coffre/settings", `{"ownerKey":"`+key+`","password":"motdepasse"}`, adminCookies(t, r)).Result().Cookies()
 
 	send := func(channel, name string, body []byte, cookies []*http.Cookie) *http.Response {
 		t.Helper()
@@ -1454,7 +1510,7 @@ func TestVideoLinks(t *testing.T) {
 	s := newTestServer(t)
 	r := s.router()
 	key := jsonField(t, do(r, "POST", "/api/cine/messages", `{"nickname":"Arthur","message":"hop"}`), "ownerKey")
-	pass := do(r, "POST", "/api/cine/settings", `{"ownerKey":"`+key+`","password":"motdepasse"}`).Result().Cookies()
+	pass := req(r, "POST", "/api/cine/settings", `{"ownerKey":"`+key+`","password":"motdepasse"}`, adminCookies(t, r)).Result().Cookies()
 	for _, m := range []string{
 		"Regardez https://youtu.be/dQw4w9WgXcQ et lisez https://exemple.fr/article",
 		"Encore https://www.youtube.com/watch?v=dQw4w9WgXcQ (la même) et www.sloubi.chat/chante",
@@ -1507,5 +1563,377 @@ func TestForbiddenExample(t *testing.T) {
 	}
 	if f.checkChannel("kaamelott") != "" || f.checkChannel("badminton-club") != "" {
 		t.Error("l'exemple refuse un nom ordinaire")
+	}
+}
+
+func TestAdminClaimsExistingRooms(t *testing.T) {
+	st := testStore(t)
+	for _, name := range []string{"ancien", "fonde"} {
+		if _, err := st.createRoom(name, "", DefaultTheme); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.ensureAdmin("moi@exemple.fr"); err != nil {
+		t.Fatal(err)
+	}
+	admin, err := st.userByEmail("moi@exemple.fr")
+	if err != nil || admin.Role != roleAdmin || admin.Status != statusApproved {
+		t.Fatalf("admin = %+v, %v", admin, err)
+	}
+	for _, name := range []string{"ancien", "fonde"} {
+		if r, _ := st.room(name); r.OwnerUser != admin.ID {
+			t.Errorf("%s appartient à %d", name, r.OwnerUser)
+		}
+	}
+	// une seule fois : les lieux fondés ensuite restent à leur créateur
+	st.createRoom("nouveau", "h", DefaultTheme)
+	st.ensureAdmin("moi@exemple.fr")
+	if r, _ := st.room("nouveau"); r.OwnerUser != 0 {
+		t.Errorf("nouveau lieu pris par l'admin")
+	}
+	// un seul admin : changer d'adresse rétrograde l'ancienne
+	st.ensureAdmin("autre@exemple.fr")
+	if u, _ := st.userByEmail("moi@exemple.fr"); u.Role != roleMember {
+		t.Errorf("deux admins")
+	}
+}
+
+func TestLoginCodes(t *testing.T) {
+	r := testServer(t)
+	if w := do(r, "POST", "/api/_compte/code", `{"email":"pas-une-adresse"}`); w.Code != 400 {
+		t.Errorf("adresse invalide = %d", w.Code)
+	}
+	if w := do(r, "GET", "/api/_compte/me", ""); !strings.Contains(w.Body.String(), `"signedIn":false`) {
+		t.Errorf("me sans session = %s", w.Body.String())
+	}
+	if w := do(r, "POST", "/api/_compte/code", `{"email":"Lea@Exemple.fr "}`); w.Code != 200 {
+		t.Fatalf("code = %d", w.Code)
+	}
+	if w := do(r, "POST", "/api/_compte/code", `{"email":"lea@exemple.fr"}`); w.Code != 429 {
+		t.Errorf("renvoi immédiat = %d", w.Code)
+	}
+	code, _ := sentCodes.Load("lea@exemple.fr")
+	wrong := "000000"
+	if code == wrong {
+		wrong = "111111"
+	}
+	for i := 0; i < otpMaxAttempts; i++ {
+		if w := do(r, "POST", "/api/_compte/verify", `{"email":"lea@exemple.fr","code":"`+wrong+`"}`); w.Code != 401 {
+			t.Fatalf("mauvais code = %d", w.Code)
+		}
+	}
+	// cinq essais ratés : même le bon code ne passe plus
+	if w := do(r, "POST", "/api/_compte/verify", `{"email":"lea@exemple.fr","code":"`+code.(string)+`"}`); w.Code != 401 {
+		t.Errorf("bon code après 5 échecs = %d", w.Code)
+	}
+	session := login(t, r, "lea@exemple.fr")
+	w := req(r, "GET", "/api/_compte/me", "", session)
+	if !strings.Contains(w.Body.String(), `"email":"lea@exemple.fr"`) || !strings.Contains(w.Body.String(), `"status":"aucun"`) {
+		t.Errorf("me = %s", w.Body.String())
+	}
+	forged := []*http.Cookie{{Name: sessionCookie, Value: session[0].Value + "x"}}
+	if w := req(r, "GET", "/api/_compte/me", "", forged); !strings.Contains(w.Body.String(), `"signedIn":false`) {
+		t.Errorf("session forgée acceptée")
+	}
+	if w := req(r, "GET", "/api/_admin/users", "", session); w.Code != 403 {
+		t.Errorf("liste des comptes pour un membre = %d", w.Code)
+	}
+	if w := do(r, "GET", "/_/compte", ""); w.Code != 200 || !strings.Contains(w.Body.String(), "account.js") {
+		t.Errorf("page compte = %d", w.Code)
+	}
+}
+
+func TestPasswordNeedsApproval(t *testing.T) {
+	r := testServer(t)
+	key := jsonField(t, do(r, "POST", "/api/jardin/messages", `{"nickname":"Testeur","message":"hop"}`), "ownerKey")
+	// sans compte : il faut se connecter
+	if w := do(r, "POST", "/api/jardin/settings", `{"ownerKey":"`+key+`","password":"motdepasse"}`); w.Code != 401 {
+		t.Fatalf("mot de passe sans compte = %d", w.Code)
+	}
+	// connecté mais pas validé : c'est une demande, le lieu reste ouvert
+	lea := login(t, r, "lea@exemple.fr")
+	w := req(r, "POST", "/api/jardin/settings", `{"ownerKey":"`+key+`","password":"motdepasse"}`, lea)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"pending":true`) || !strings.Contains(w.Body.String(), `"locked":false`) {
+		t.Fatalf("demande = %d %s", w.Code, w.Body.String())
+	}
+	if w := do(r, "POST", "/api/jardin/messages", `{"nickname":"Testeur","message":"encore ouvert"}`); w.Code != 202 {
+		t.Errorf("lieu fermé avant la validation = %d", w.Code)
+	}
+	if w := req(r, "GET", "/api/jardin/info", "", lea); !strings.Contains(w.Body.String(), `"pending":true`) || !strings.Contains(w.Body.String(), `"owner":true`) {
+		t.Errorf("info = %s", w.Body.String())
+	}
+	// le lieu est désormais à son compte : la clé seule ne suffit plus
+	if w := do(r, "POST", "/api/jardin/settings", `{"ownerKey":"`+key+`","theme":"moulin"}`); w.Code != 403 {
+		t.Errorf("clé de créateur après le compte = %d", w.Code)
+	}
+
+	admin := adminCookies(t, r)
+	w = req(r, "GET", "/api/_admin/users", "", admin)
+	if !strings.Contains(w.Body.String(), `"email":"lea@exemple.fr"`) || !strings.Contains(w.Body.String(), `"status":"en-attente"`) ||
+		!strings.Contains(w.Body.String(), `"name":"jardin"`) || strings.Contains(w.Body.String(), "motdepasse") {
+		t.Fatalf("demandes = %s", w.Body.String())
+	}
+	leaID := userID(t, r, admin, "lea@exemple.fr")
+	if w := req(r, "POST", "/api/_admin/users/"+leaID, `{"action":"n'importe"}`, admin); w.Code != 400 {
+		t.Errorf("action inconnue = %d", w.Code)
+	}
+	if w := req(r, "POST", "/api/_admin/users/"+leaID, `{"action":"valider"}`, lea); w.Code != 403 {
+		t.Errorf("auto-validation = %d", w.Code)
+	}
+	if w := req(r, "POST", "/api/_admin/users/"+leaID, `{"action":"valider"}`, admin); w.Code != 200 || !strings.Contains(w.Body.String(), "jardin") {
+		t.Fatalf("validation = %d %s", w.Code, w.Body.String())
+	}
+	// validé : le mot de passe demandé devient la serrure
+	if w := do(r, "POST", "/api/jardin/messages", `{"nickname":"Testeur","message":"fermé ?"}`); w.Code != 403 {
+		t.Errorf("lieu ouvert après validation = %d", w.Code)
+	}
+	if w := do(r, "POST", "/api/jardin/unlock", `{"password":"motdepasse"}`); w.Code != 200 {
+		t.Errorf("le mot de passe demandé n'ouvre pas = %d", w.Code)
+	}
+	if w := req(r, "POST", "/api/jardin/settings", `{"password":"nouveau secret"}`, lea); !strings.Contains(w.Body.String(), `"pending":false`) || !strings.Contains(w.Body.String(), `"locked":true`) {
+		t.Errorf("membre validé = %s", w.Body.String())
+	}
+
+	// retirer l'accès : le lieu reste gardé (sinon ses conversations deviendraient publiques)
+	req(r, "POST", "/api/_admin/users/"+leaID, `{"action":"retirer"}`, admin)
+	if w := do(r, "POST", "/api/jardin/messages", `{"nickname":"Testeur","message":"toujours fermé"}`); w.Code != 403 {
+		t.Errorf("lieu rouvert par le retrait = %d", w.Code)
+	}
+	if w := req(r, "POST", "/api/jardin/settings", `{"password":"encore un autre"}`, lea); !strings.Contains(w.Body.String(), `"pending":true`) {
+		t.Errorf("après retrait, nouveau mot de passe = %s", w.Body.String())
+	}
+
+	// refuser : la demande tombe
+	key2 := jsonField(t, do(r, "POST", "/api/verger/messages", `{"nickname":"Testeur","message":"hop"}`), "ownerKey")
+	tom := login(t, r, "tom@exemple.fr")
+	req(r, "POST", "/api/verger/settings", `{"ownerKey":"`+key2+`","password":"motdepasse"}`, tom)
+	req(r, "POST", "/api/_admin/users/"+userID(t, r, admin, "tom@exemple.fr"), `{"action":"refuser"}`, admin)
+	if w := req(r, "GET", "/api/verger/info", "", tom); !strings.Contains(w.Body.String(), `"pending":false`) || !strings.Contains(w.Body.String(), `"status":"refuse"`) {
+		t.Errorf("après refus = %s", w.Body.String())
+	}
+
+	// l'admin règle tous les lieux
+	if w := req(r, "POST", "/api/verger/settings", `{"theme":"bd"}`, admin); w.Code != 200 {
+		t.Errorf("admin sur un lieu d'autrui = %d", w.Code)
+	}
+}
+
+// userID : l'id d'un compte, d'après la liste de l'admin.
+func userID(t *testing.T, r http.Handler, admin []*http.Cookie, email string) string {
+	t.Helper()
+	var list struct{ Users []adminUser }
+	json.Unmarshal(req(r, "GET", "/api/_admin/users", "", admin).Body.Bytes(), &list)
+	for _, u := range list.Users {
+		if u.Email == email {
+			return strconv.FormatInt(u.ID, 10)
+		}
+	}
+	t.Fatalf("%s absent de la liste", email)
+	return ""
+}
+
+func hostReq(r http.Handler, host, method, path, body string, cookies []*http.Cookie) *httptest.ResponseRecorder {
+	rq := httptest.NewRequest(method, path, strings.NewReader(body))
+	rq.Host = host
+	if body != "" {
+		rq.Header.Set("Content-Type", "application/json")
+	}
+	for _, c := range cookies {
+		rq.AddCookie(c)
+	}
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, rq)
+	return w
+}
+
+func TestCustomDomains(t *testing.T) {
+	s := newTestServer(t)
+	s.siteURL, s.siteHosts = "https://sloubi.chat", map[string]bool{"sloubi.chat": true, "www.sloubi.chat": true, "example.com": true}
+	r := s.router()
+	key := jsonField(t, do(r, "POST", "/api/maison/messages", `{"nickname":"Testeur","message":"hop"}`), "ownerKey")
+
+	// réservé aux membres
+	if w := do(r, "POST", "/api/maison/settings", `{"ownerKey":"`+key+`","domain":"chez-nous.fr"}`); w.Code != 401 {
+		t.Errorf("domaine sans compte = %d", w.Code)
+	}
+	admin := adminCookies(t, r)
+	for _, bad := range []string{"pas un domaine", "localhost", "192.168.1.1", "sloubi.chat", "truc.sloubi.chat", "-x.fr", "x"} {
+		if w := req(r, "POST", "/api/maison/settings", `{"domain":"`+bad+`"}`, admin); w.Code != 400 {
+			t.Errorf("domaine %q accepté = %d", bad, w.Code)
+		}
+	}
+	if w := req(r, "POST", "/api/maison/settings", `{"domain":"HTTPS://Chez-Nous.fr/"}`, admin); w.Code != 200 || jsonField(t, w, "domain") != "chez-nous.fr" {
+		t.Fatalf("domaine = %d %s", w.Code, w.Body.String())
+	}
+	do(r, "POST", "/api/voisin/messages", `{"nickname":"Testeur","message":"hop"}`)
+	if w := req(r, "POST", "/api/voisin/settings", `{"domain":"chez-nous.fr"}`, admin); w.Code != 409 {
+		t.Errorf("domaine en double = %d", w.Code)
+	}
+
+	// sur le domaine : / est le lieu, l'API passe, le reste repart vers le site
+	w := hostReq(r, "chez-nous.fr", "GET", "/", "", nil)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `data-chan="maison"`) || !strings.Contains(w.Body.String(), `data-base="/"`) ||
+		!strings.Contains(w.Body.String(), `href="https://sloubi.chat/"`) {
+		t.Fatalf("lieu sur son domaine = %d", w.Code)
+	}
+	if w := hostReq(r, "Chez-Nous.fr:443", "POST", "/api/maison/messages", `{"nickname":"Testeur","message":"de chez nous"}`, nil); w.Code != 202 {
+		t.Errorf("API sur le domaine = %d", w.Code)
+	}
+	if w := hostReq(r, "chez-nous.fr", "GET", "/assets/app.js", "", nil); w.Code != 200 {
+		t.Errorf("assets sur le domaine = %d", w.Code)
+	}
+	for path, loc := range map[string]string{
+		"/maison?heure=14": "/?heure=14",
+		"/voisin":          "https://sloubi.chat/voisin",
+		"/_/":              "https://sloubi.chat/_/",
+	} {
+		if w := hostReq(r, "chez-nous.fr", "GET", path, "", nil); w.Code != 302 || w.Header().Get("Location") != loc {
+			t.Errorf("%s → %d %s, attendu %s", path, w.Code, w.Header().Get("Location"), loc)
+		}
+	}
+	// domaine inconnu : vers le site
+	if w := hostReq(r, "inconnu.fr", "GET", "/maison", "", nil); w.Code != 302 || w.Header().Get("Location") != "https://sloubi.chat/" || w.Header().Get("Cache-Control") != "no-store" {
+		t.Errorf("domaine inconnu = %d %s", w.Code, w.Header().Get("Location"))
+	}
+	// le site lui-même ne change pas
+	if w := hostReq(r, "sloubi.chat", "GET", "/maison", "", nil); w.Code != 200 || !strings.Contains(w.Body.String(), `data-base="/maison"`) {
+		t.Errorf("site = %d", w.Code)
+	}
+
+	// derrière le relais de nadaprod : Host 127.0.0.1:8888, le domaine dans X-Forwarded-Host
+	relay := func(remote string) *httptest.ResponseRecorder {
+		rq := httptest.NewRequest("GET", "/", nil)
+		rq.Host, rq.RemoteAddr = "127.0.0.1:8888", remote
+		rq.Header.Set("X-Forwarded-Host", "chez-nous.fr")
+		rq.Header.Set("X-Forwarded-For", "127.0.0.1")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, rq)
+		return w
+	}
+	if w := relay("127.0.0.1:4242"); w.Code != 200 || !strings.Contains(w.Body.String(), `data-chan="maison"`) {
+		t.Errorf("relais local = %d", w.Code)
+	}
+	if w := relay("203.0.113.9:4242"); strings.Contains(w.Body.String(), `data-chan="maison"`) {
+		t.Error("X-Forwarded-Host cru d'un inconnu")
+	}
+	ws := httptest.NewRequest("GET", "/ws/maison", nil)
+	ws.Host, ws.RemoteAddr = "127.0.0.1:8888", "127.0.0.1:4242"
+	ws.Header.Set("X-Forwarded-Host", "chez-nous.fr")
+	ws.Header.Set("Origin", "https://chez-nous.fr")
+	if !sameOrigin(ws) {
+		t.Error("WebSocket refusé derrière le relais")
+	}
+	ws.Header.Set("Origin", "https://ailleurs.fr")
+	if sameOrigin(ws) {
+		t.Error("WebSocket d'un autre site accepté")
+	}
+
+	// TLS à la demande : le proxy local demande, l'extérieur n'obtient rien
+	ask := func(d, remote string) int {
+		rq := httptest.NewRequest("GET", "/_/domaine?domain="+d, nil)
+		rq.RemoteAddr = remote
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, rq)
+		return w.Code
+	}
+	if ask("chez-nous.fr", "127.0.0.1:5555") != 200 || ask("inconnu.fr", "127.0.0.1:5555") != 404 || ask("chez-nous.fr", "203.0.113.9:5555") != 404 {
+		t.Error("ask du proxy")
+	}
+
+	// sur son domaine, le lieu est sa propre application : « Maison », initiale M
+	page := hostReq(r, "chez-nous.fr", "GET", "/", "", nil).Body.String()
+	if !strings.Contains(page, "<title>Maison</title>") || !strings.Contains(page, `apple-mobile-web-app-title" content="Maison"`) {
+		t.Error("titre de l'application")
+	}
+	w = hostReq(r, "chez-nous.fr", "GET", "/manifest.json", "", nil)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"name":"Maison"`) || !strings.Contains(w.Body.String(), `"start_url":"/"`) {
+		t.Errorf("manifeste = %d %s", w.Code, w.Body.String())
+	}
+	for path, size := range map[string]int{"/icon-512.png": 512, "/apple-touch-icon.png": 180, "/favicon.png": 64} {
+		w := hostReq(r, "chez-nous.fr", "GET", path, "", nil)
+		img, err := png.Decode(w.Body)
+		if w.Code != 200 || err != nil || img.Bounds().Dx() != size {
+			t.Errorf("%s = %d %v", path, w.Code, err)
+		}
+	}
+	if w := hostReq(r, "sloubi.chat", "GET", "/manifest.json", "", nil); !strings.Contains(w.Body.String(), `"name": "Sloubi"`) {
+		t.Error("le manifeste du site a changé")
+	}
+
+	// détacher
+	req(r, "POST", "/api/maison/settings", `{"domain":""}`, admin)
+	if w := hostReq(r, "chez-nous.fr", "GET", "/", "", nil); w.Code != 302 {
+		t.Errorf("domaine détaché encore servi = %d", w.Code)
+	}
+}
+
+// presenceEvent : le prochain événement « presence » reçu par w.
+func (w *wsClient) presenceEvent() map[string]any {
+	w.t.Helper()
+	w.conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	for {
+		_, b, err := w.conn.ReadMessage()
+		if err != nil {
+			w.t.Fatalf("attendu une présence : %v", err)
+		}
+		var m map[string]any
+		json.Unmarshal(b, &m)
+		if m["type"] == "presence" {
+			return m
+		}
+	}
+}
+
+func TestPresence(t *testing.T) {
+	s := newTestServer(t)
+	grace := 150 * time.Millisecond
+	s.hub.presGrace = grace
+	srv := httptest.NewServer(s.router())
+	defer srv.Close()
+	do(s.router(), "POST", "/api/feu/messages", `{"nickname":"Testeur","message":"hop"}`)
+	hello := func(nick string) *wsClient {
+		c := dialRoom(t, srv, "feu", nil)
+		c.send(`{"type":"hello","nick":"` + nick + `"}`)
+		return c
+	}
+	say := func(m map[string]any) string {
+		if m["op"] == "here" {
+			b, _ := json.Marshal(m["nicks"])
+			return "here " + string(b)
+		}
+		return fmt.Sprint(m["op"], " ", m["nick"])
+	}
+
+	a := hello("Arthur")
+	if got := say(a.presenceEvent()); got != "here []" {
+		t.Fatalf("a : %s", got)
+	}
+	b := hello("Bohort")
+	if got := say(b.presenceEvent()); got != `here ["Arthur"]` {
+		t.Fatalf("b : %s", got)
+	}
+	if got := say(a.presenceEvent()); got != "in Bohort" {
+		t.Fatalf("a voit : %s", got)
+	}
+	a2 := hello("Arthur") // un deuxième onglet : personne n'entre
+	a2.presenceEvent()
+	dialRoom(t, srv, "feu", nil).send(`{"type":"hello","nick":"x"}`) // pseudo invalide : ignoré
+
+	// Bohort recharge sa page : ni sortie ni entrée
+	b.conn.Close()
+	b2 := hello("Bohort")
+	b2.presenceEvent()
+	time.Sleep(3 * grace)
+
+	// Arthur ferme un onglet, puis l'autre : il sort, une seule fois, après le délai
+	a.conn.Close()
+	a2.conn.Close()
+	if got := say(b2.presenceEvent()); got != "out Arthur" {
+		t.Fatalf("b2 voit : %s (rien ne devait arriver avant)", got)
+	}
+	c := hello("Calogrenant")
+	c.presenceEvent()
+	if got := say(b2.presenceEvent()); got != "in Calogrenant" {
+		t.Fatalf("b2 voit : %s", got)
 	}
 }

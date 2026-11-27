@@ -1,31 +1,31 @@
 <!DOCTYPE html>
 <html lang="fr">
 <head>
-    <title>/{{.Chan}} · Sloubi.chat</title>
+    <title>{{.Title}}</title>
     <meta name="description" content="{{.Theme.Description}}">
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
     <meta name="theme-color" content="{{.Theme.Color}}">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="apple-mobile-web-app-title" content="Sloubi">
+    <meta name="apple-mobile-web-app-title" content="{{.AppName}}">
+    <meta name="application-name" content="{{.AppName}}">
     <link rel="manifest" href="/manifest.json">
-    <link rel="apple-touch-icon" href="/assets/icon-192.png">
+    <link rel="icon" href="{{.Icon}}" type="image/png">
+    <link rel="apple-touch-icon" href="{{.Touch}}">
     <link rel="preload" href="/assets/fonts/uncialantiqua-latin.woff2" as="font" type="font/woff2" crossorigin>
     <link rel="preload" href="/assets/fonts/cormorantgaramond-latin.woff2" as="font" type="font/woff2" crossorigin>
-    <link rel="modulepreload" href="/assets/vendor/three/three.module.js">
-    <link rel="modulepreload" href="/assets/vendor/three/three.core.js">
     <link rel="stylesheet" href="/assets/fonts/fonts.css">
     <link rel="stylesheet" href="/assets/room.css">
     <link rel="stylesheet" href="/assets/themes.css">
 </head>
-<body class="room" data-chan="{{.Chan}}" data-theme="{{.Theme.ID}}"{{if .Locked}} data-locked{{end}}>
+<body class="room" data-chan="{{.Chan}}" data-base="{{.Base}}" data-theme="{{.Theme.ID}}"{{if .Locked}} data-locked{{end}}>
     <canvas id="smoke" class="smoke" aria-hidden="true"></canvas>
     <div class="veil" aria-hidden="true"></div>
 
     <div class="room-shell">
         <header class="room-bar">
-            <a href="/" class="room-mark" aria-label="Sloubi.chat : revenir à l'accueil">Sloubi<span>.chat</span></a>
+            <a href="{{.Home}}" class="room-mark" aria-label="Sloubi.chat : revenir à l'accueil">Sloubi<span>.chat</span></a>
 
             <div class="room-chan">
                 <span class="room-chan-label">{{.Theme.Name}}</span>
@@ -88,20 +88,18 @@
 
         {{if .Calls}}
         <section class="stage" id="stage" aria-label="Live" hidden>
-            <video id="stageVideo" class="stage-video" playsinline autoplay muted></video>
+            <div class="stage-tiles" id="stageTiles"></div>
             <div class="stage-bar">
                 <span class="stage-who"><span class="stage-dot" aria-hidden="true"></span><span id="stageWho"></span></span>
                 <button id="stageFull" class="icon-btn stage-full" type="button" aria-label="Plein écran">
                     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
                 </button>
             </div>
-            <p class="stage-wait" id="stageWait" hidden>L'image arrive…</p>
         </section>
         {{end}}
 
         <div class="room-chat">
             <div class="chat-messages" id="chatMessages" role="log" aria-live="polite" aria-label="Messages de la discussion">
-                <div class="system-message">{{.Theme.Welcome}}</div>
             </div>
 
             <form id="gate" class="gate" hidden>
@@ -176,7 +174,7 @@
                 </button>
                 <input type="file" id="fileInput" multiple hidden>
                 <div class="rec-wrap">
-                    <button id="recordButton" class="whisper-attach" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="recordMenu" aria-label="Enregistrer un message vocal ou une vidéo" title="Enregistrer">
+                    <button id="recordButton" class="whisper-attach" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="recordMenu" aria-label="Enregistrer un message vocal, une vidéo ou son écran" title="Enregistrer">
                         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
                     </button>
                     <div class="rec-menu" id="recordMenu" role="menu" hidden>
@@ -187,6 +185,10 @@
                         <button type="button" role="menuitem" data-rec="video">
                             <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10.5l5-3v9l-5-3"/></svg>
                             Vidéo
+                        </button>
+                        <button type="button" role="menuitem" data-rec="screen" hidden>
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>
+                            Mon écran <small>+ micro</small>
                         </button>
                     </div>
                 </div>
@@ -251,7 +253,6 @@
                 <button id="recStop" class="rec-big rec-halt" type="button" hidden><span class="rec-square" aria-hidden="true"></span> Arrêter</button>
                 <button id="recSend" class="rec-big rec-go" type="button" hidden>Envoyer</button>
                 <button id="recRetry" class="rec-small" type="button" hidden>Recommencer</button>
-                <button id="recFlip" class="rec-small" type="button" hidden>Retourner la caméra</button>
                 <button id="recCancel" class="rec-small" type="button">Annuler</button>
             </div>
         </div>
@@ -362,8 +363,19 @@
                         <button id="placeRemove" class="change-btn change-quiet" type="button" hidden>Retirer le mot de passe</button>
                         <button id="placeLink" class="place-link" type="button" hidden>Copier mon lien de créateur</button>
                     </div>
-                    <p class="place-hint">Avec un mot de passe, celles et ceux qui l’ont peuvent aussi s’appeler, jusqu’à 6 à la fois.</p>
+                    <div class="place-field" id="placeDomainField">
+                        <label class="setting-label" for="placeDomain">Nom de domaine</label>
+                        <div class="setting-field">
+                            <input type="text" id="placeDomain" class="nickname-input" placeholder="ex. chez-nous.fr"
+                                   autocomplete="off" autocapitalize="none" spellcheck="false" inputmode="url" maxlength="253">
+                            <button id="placeDomainSave" class="change-btn" type="button" disabled>Changer</button>
+                        </div>
+                    </div>
+                    <p class="place-hint" id="placeDomainHint"></p>
+                    <div class="place-login" id="placeLogin" hidden></div>
+                    <p class="place-hint" id="placePwHint">Avec un mot de passe, celles et ceux qui l’ont peuvent aussi partager des fichiers et s’appeler, jusqu’à 6 à la fois.</p>
                     <p class="place-note" id="placeNote" aria-live="polite"></p>
+                    <a class="place-account" id="placeAccount" href="{{.Account}}">Mon compte</a>
                 </form>
                 <a href="https://github.com/l3dlp/sloubi.chat" class="setting-item setting-link">Le code est sur GitHub ↗</a>
             </div>
@@ -374,7 +386,7 @@
     <script src="/assets/app.js" type="module"></script>
     <script src="/assets/library.js" type="module"></script>
     {{if .Calls}}<script src="/assets/recorder.js" type="module"></script>{{end}}
-    <script src="/assets/{{.Theme.FX}}" type="module"></script>
+    <script src="/assets/fx.js" type="module" id="fxLoader" data-fx="{{.Theme.FX}}"></script>
     {{if .Calls}}<script src="/assets/call.js" type="module"></script>{{end}}
 </body>
 </html>

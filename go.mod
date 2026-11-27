@@ -6,7 +6,8 @@ require (
 	github.com/gin-contrib/gzip v1.2.9
 	github.com/gin-gonic/gin v1.12.0
 	github.com/gophre/websocket v1.5.0
-	golang.org/x/text v0.43.0
+	golang.org/x/image v0.48.0
+	golang.org/x/text v0.44.0
 	modernc.org/sqlite v1.61.0
 )
 
@@ -41,7 +42,7 @@ require (
 	golang.org/x/arch v0.32.0 // indirect
 	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/net v0.62.0 // indirect
-	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/sys v0.50.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 	modernc.org/libc v1.79.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
